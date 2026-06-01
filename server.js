@@ -7,6 +7,12 @@ const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const rateLimit = require("express-rate-limit");
 const taskRoutes = require("./src/routes/task.routes");
+const projectRoutes = require("./src/routes/project.routes");
+const workflowRoutes = require('./src/routes/workflow.routes');
+const templateRoutes = require('./src/routes/template.routes');
+const resourceRoutes = require('./src/routes/resource.routes');
+
+
 
 dotenv.config();
 
@@ -106,7 +112,10 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/departments", departmentRoutes);
 app.use("/api/v1/tasks", taskRoutes);
-
+app.use('/api/v1/workflows', workflowRoutes);
+app.use('/api/v1/templates', templateRoutes);
+app.use("/api/v1/projects", projectRoutes);
+app.use('/api/v1/resources', resourceRoutes);
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({
