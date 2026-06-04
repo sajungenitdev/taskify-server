@@ -7,6 +7,7 @@ const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const rateLimit = require("express-rate-limit");
 
+
 dotenv.config();
 
 const app = express();
@@ -43,6 +44,7 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.log(`CORS blocked: ${origin}`);
         callback(new Error(`Origin ${origin} not allowed by CORS`));
       }
     },
@@ -66,11 +68,22 @@ app.use("/uploads", express.static("uploads"));
 const authRoutes = require("./src/routes/auth.routes");
 const userRoutes = require("./src/routes/user.routes");
 const departmentRoutes = require("./src/routes/department.routes");
+const taskRoutes = require("./src/routes/task.routes");
+const projectRoutes = require("./src/routes/project.routes");
+const resourceRoutes = require("./src/routes/resource.routes");
+const templateRoutes = require("./src/routes/template.routes"); // ADD THIS
+const roleRoutes = require("./src/routes/role.routes");
+
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/departments", departmentRoutes);
+app.use("/api/v1/tasks", taskRoutes);
+app.use("/api/v1/projects", projectRoutes);
+app.use("/api/v1/resources", resourceRoutes);
+app.use("/api/v1/templates", templateRoutes); // ADD THIS
+app.use("/api/v1/roles", roleRoutes);
 
 // Health check
 app.get("/health", (req, res) => {
@@ -80,6 +93,15 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
+    endpoints: {
+      tasks: "/api/v1/tasks",
+      projects: "/api/v1/projects",
+      resources: "/api/v1/resources",
+      templates: "/api/v1/templates",
+      departments: "/api/v1/departments",
+      auth: "/api/v1/auth",
+      users: "/api/v1/users",
+    },
   });
 });
 
@@ -94,6 +116,10 @@ app.get("/", (req, res) => {
       auth: "/api/v1/auth",
       users: "/api/v1/users",
       departments: "/api/v1/departments",
+      tasks: "/api/v1/tasks",
+      projects: "/api/v1/projects",
+      resources: "/api/v1/resources",
+      templates: "/api/v1/templates",
       health: "/health",
     },
   });
@@ -111,6 +137,7 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);
+  console.error("Stack:", err.stack);
   res.status(err.status || 500).json({
     success: false,
     message: err.message || "Internal server error",
@@ -121,7 +148,10 @@ app.use((err, req, res, next) => {
 // Database connection
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI);
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
     console.log("✅ MongoDB connected successfully");
     return true;
   } catch (error) {
@@ -160,10 +190,39 @@ const startServer = async () => {
     console.log(
       `🔐 Auth endpoint:   http://localhost:${PORT}/api/v1/auth/login`,
     );
+    console.log(`📋 Tasks endpoint:  http://localhost:${PORT}/api/v1/tasks`);
+    console.log(
+      `📁 Projects endpoint: http://localhost:${PORT}/api/v1/projects`,
+    );
+    console.log(
+      `📦 Resources endpoint: http://localhost:${PORT}/api/v1/resources`,
+    );
+    console.log(
+      `📝 Templates endpoint: http://localhost:${PORT}/api/v1/templates`,
+    );
     console.log(
       "\n═══════════════════════════════════════════════════════════\n",
     );
   });
 };
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("\n\n🛑 Shutting down gracefully...");
+  if (mongoose.connection.readyState === 1) {
+    await mongoose.connection.close();
+    console.log("📦 MongoDB connection closed");
+  }
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  console.log("\n\n🛑 Shutting down gracefully...");
+  if (mongoose.connection.readyState === 1) {
+    await mongoose.connection.close();
+    console.log("📦 MongoDB connection closed");
+  }
+  process.exit(0);
+});
 
 startServer();
