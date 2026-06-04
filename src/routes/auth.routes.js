@@ -14,9 +14,9 @@ const {
   updateUser,
   deleteUser,
   changeUserRole,
-  getDemoUsers,
+  getActiveUsers,
 } = require("../controllers/auth.controller");
-const { authenticate } = require("../middleware/auth.middleware");
+const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const { validateRequest } = require("../middleware/validation.middleware");
 const {
   rateLimiter,
@@ -31,26 +31,33 @@ const loginValidation = [
   body("password").notEmpty(),
 ];
 
-// Public routes
+// ============ PUBLIC ROUTES ============
 router.post("/login", rateLimiter, loginValidation, validateRequest, login);
-router.get("/demo-users", getDemoUsers);
+router.get("/active-users", getActiveUsers);
+router.post("/refresh-token", refreshToken);
+router.post("/forgot-password", strictRateLimiter, forgotPassword);
+router.post("/reset-password", strictRateLimiter, resetPassword);
 
-// Protected routes (require authentication)
+// ============ PROTECTED ROUTES (require authentication) ============
 router.use(authenticate);
 
-// User management routes
-router.get("/users", getAllUsers);
+router.get(
+  "/users",
+  requireRole("admin", "super_admin", "hr_manager"),
+  getAllUsers,
+);
 router.get("/me", getMe);
-router.put("/users/:id", updateUser);
-router.delete("/users/:id", deleteUser);
-router.put("/users/:id/role", changeUserRole);
-
-// Auth routes
 router.post("/logout", logout);
 router.post("/change-password", changePassword);
 router.post("/complete-onboarding", completeOnboarding);
-
-// Admin only routes
-router.post("/register", strictRateLimiter, register);
+router.post(
+  "/register",
+  strictRateLimiter,
+  requireRole("admin", "super_admin"),
+  register,
+);
+router.put("/users/:id", requireRole("admin", "super_admin"), updateUser);
+router.delete("/users/:id", requireRole("super_admin"), deleteUser);
+router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
 
 module.exports = router;
