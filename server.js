@@ -6,7 +6,8 @@ const cookieParser = require("cookie-parser");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const rateLimit = require("express-rate-limit");
-
+const path = require("path");
+const fs = require("fs");
 
 dotenv.config();
 
@@ -30,7 +31,11 @@ const limiter = rateLimit({
 });
 
 // Middleware
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin for uploads
+  }),
+);
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -61,9 +66,70 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 app.use(limiter);
 
-// Static files
-app.use("/uploads", express.static("uploads"));
+// Static files - Serve uploads directory
+const uploadsPath = path.join(__dirname, "uploads");
+console.log(`📁 Uploads directory: ${uploadsPath}`);
 
+// Create uploads directory if it doesn't exist
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+  console.log("📁 Created uploads directory");
+}
+
+// Create tasks subdirectory
+const tasksUploadsPath = path.join(uploadsPath, "tasks");
+if (!fs.existsSync(tasksUploadsPath)) {
+  fs.mkdirSync(tasksUploadsPath, { recursive: true });
+  console.log("📁 Created tasks uploads directory");
+}
+
+// Create avatars subdirectory (for user avatars)
+const avatarsUploadsPath = path.join(uploadsPath, "avatars");
+if (!fs.existsSync(avatarsUploadsPath)) {
+  fs.mkdirSync(avatarsUploadsPath, { recursive: true });
+  console.log("📁 Created avatars uploads directory");
+}
+
+// Serve static files
+app.use(
+  "/uploads",
+  express.static(uploadsPath, {
+    setHeaders: (res, filePath) => {
+      // Set proper content type for images
+      if (filePath.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+        res.setHeader(
+          "Content-Type",
+          `image/${path.extname(filePath).slice(1)}`,
+        );
+      }
+      // Allow caching for better performance
+      res.setHeader("Cache-Control", "public, max-age=31536000");
+    },
+  }),
+);
+
+// Test endpoint for uploads (for debugging)
+app.get("/test-uploads", (req, res) => {
+  try {
+    const files = fs.readdirSync(tasksUploadsPath);
+    res.json({
+      success: true,
+      message: "Uploads directory is accessible",
+      uploadsPath: uploadsPath,
+      tasksPath: tasksUploadsPath,
+      filesCount: files.length,
+      files: files.slice(0, 20), // Show first 20 files
+      staticUrl: "/uploads/tasks/",
+      serverUrl: `${req.protocol}://${req.get("host")}`,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      uploadsPath: uploadsPath,
+    });
+  }
+});
 
 // Routes
 const authRoutes = require("./src/routes/auth.routes");
@@ -72,9 +138,8 @@ const departmentRoutes = require("./src/routes/department.routes");
 const taskRoutes = require("./src/routes/task.routes");
 const projectRoutes = require("./src/routes/project.routes");
 const resourceRoutes = require("./src/routes/resource.routes");
-const templateRoutes = require("./src/routes/template.routes"); // ADD THIS
+const templateRoutes = require("./src/routes/template.routes");
 const roleRoutes = require("./src/routes/role.routes");
-
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -83,7 +148,7 @@ app.use("/api/v1/departments", departmentRoutes);
 app.use("/api/v1/tasks", taskRoutes);
 app.use("/api/v1/projects", projectRoutes);
 app.use("/api/v1/resources", resourceRoutes);
-app.use("/api/v1/templates", templateRoutes); // ADD THIS
+app.use("/api/v1/templates", templateRoutes);
 app.use("/api/v1/roles", roleRoutes);
 
 // Health check
@@ -94,6 +159,7 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
+    uploadsDir: fs.existsSync(uploadsPath),
     endpoints: {
       tasks: "/api/v1/tasks",
       projects: "/api/v1/projects",
@@ -102,6 +168,7 @@ app.get("/health", (req, res) => {
       departments: "/api/v1/departments",
       auth: "/api/v1/auth",
       users: "/api/v1/users",
+      testUploads: "/test-uploads",
     },
   });
 });
@@ -122,6 +189,7 @@ app.get("/", (req, res) => {
       resources: "/api/v1/resources",
       templates: "/api/v1/templates",
       health: "/health",
+      testUploads: "/test-uploads",
     },
   });
 });
@@ -182,12 +250,21 @@ const startServer = async () => {
     console.log("\n⚠️  Server starting without database connection");
   }
 
+  // Log uploads directory status
+  console.log(`\n📁 Uploads directory: ${uploadsPath}`);
+  console.log(`📁 Uploads exists: ${fs.existsSync(uploadsPath)}`);
+  console.log(`📁 Tasks uploads exists: ${fs.existsSync(tasksUploadsPath)}`);
+  console.log(
+    `📁 Avatars uploads exists: ${fs.existsSync(avatarsUploadsPath)}`,
+  );
+
   app.listen(PORT, () => {
     console.log(`\n📡 Server:          http://localhost:${PORT}`);
     console.log(`🌍 Environment:     ${process.env.NODE_ENV || "development"}`);
     console.log(
       `💾 Database:        ${dbConnected ? "Connected ✅" : "Disconnected ⚠️"}`,
     );
+    console.log(`📁 Static files:    /uploads`);
     console.log(
       `🔐 Auth endpoint:   http://localhost:${PORT}/api/v1/auth/login`,
     );
@@ -201,6 +278,7 @@ const startServer = async () => {
     console.log(
       `📝 Templates endpoint: http://localhost:${PORT}/api/v1/templates`,
     );
+    console.log(`🧪 Test uploads:    http://localhost:${PORT}/test-uploads`);
     console.log(
       "\n═══════════════════════════════════════════════════════════\n",
     );
