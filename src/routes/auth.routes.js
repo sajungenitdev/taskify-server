@@ -153,7 +153,7 @@ const updateProfileValidation = [
 
 // ============ PUBLIC ROUTES ============
 router.post("/login", rateLimiter, loginValidation, validateRequest, login);
-router.get("/active-users", getActiveUsers);
+router.get("/active-users", getActiveUsers); // ✅ This route is now properly registered
 router.post("/refresh-token", refreshToken);
 router.post(
   "/forgot-password",
