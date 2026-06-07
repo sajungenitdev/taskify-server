@@ -33,14 +33,10 @@ router.get("/", getTasks);
 router.get("/:id", getTaskById);
 
 // ============= PROJECT-SPECIFIC TASK ROUTES =============
-// Get tasks by project (with pagination and filtering)
 router.get("/project/:projectId", getTasksByProject);
-
-// Get project tasks summary and analytics
 router.get("/project/:projectId/summary", getProjectTasksSummary);
 
-// ============= BULK OPERATIONS (Managers only) =============
-// Bulk create multiple tasks for a project
+// ============= BULK OPERATIONS =============
 router.post(
   "/project/:projectId/bulk",
   requireRole("admin", "dept_manager", "project_manager", "line_manager"),
@@ -60,7 +56,6 @@ router.post(
   bulkCreateTasks,
 );
 
-// Import tasks from JSON/Array
 router.post(
   "/project/:projectId/import",
   requireRole("admin", "dept_manager", "project_manager"),
@@ -68,7 +63,6 @@ router.post(
   importTasksFromFile,
 );
 
-// Reorder tasks within a project
 router.put(
   "/project/:projectId/reorder",
   requireRole("admin", "dept_manager", "project_manager"),
@@ -85,10 +79,10 @@ router.put(
 );
 
 // ============= SINGLE TASK OPERATIONS =============
-// Create single task (Managers only)
+// Allow any authenticated user to create a task (no role restriction)
 router.post(
   "/",
-  requireRole("admin", "dept_manager", "project_manager", "line_manager"),
+  authenticate, // Only authentication required, no role check
   [
     body("title").notEmpty().withMessage("Title is required"),
     body("description").notEmpty().withMessage("Description is required"),
@@ -121,7 +115,6 @@ router.patch(
 );
 
 // ============= EXTENSION REQUESTS =============
-// Request deadline extension
 router.post(
   "/:id/request-extension",
   [
@@ -133,7 +126,6 @@ router.post(
   requestExtension,
 );
 
-// Approve extension (Managers only)
 router.post(
   "/:id/approve-extension/:extensionId",
   requireRole("admin", "dept_manager", "line_manager"),
@@ -146,7 +138,6 @@ router.post(
 );
 
 // ============= DELETE TASK =============
-// Delete task (Admin/Department Managers only)
 router.delete("/:id", requireRole("admin", "dept_manager"), deleteTask);
 
 module.exports = router;
