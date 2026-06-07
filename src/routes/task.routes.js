@@ -18,6 +18,29 @@ const {
   getTaskStatistics,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
+// Add these imports at the top of your routes file
+const {
+  getTaskComments,
+  addComment,
+  updateComment,
+  deleteComment,
+  toggleCommentLike,
+} = require("../controllers/comment.controller");
+
+const {
+  uploadAttachments,
+  getTaskAttachments,
+  downloadAttachment,
+  deleteAttachment,
+} = require("../controllers/attachment.controller");
+
+const {
+  getTaskReviews,
+  addReview,
+  updateReview,
+  deleteReview,
+  respondToReview,
+} = require("../controllers/review.controller");
 
 const router = express.Router();
 
@@ -136,6 +159,26 @@ router.post(
   ],
   approveExtension,
 );
+
+// ============= COMMENT ROUTES =============
+router.get("/:id/comments", getTaskComments);
+router.post("/:id/comments", addComment);
+router.put("/:id/comments/:commentId", updateComment);
+router.delete("/:id/comments/:commentId", deleteComment);
+router.post("/:id/comments/:commentId/like", toggleCommentLike);
+
+// ============= ATTACHMENT ROUTES =============
+router.get("/:id/attachments", getTaskAttachments);
+router.post("/:id/attachments", uploadAttachments);
+router.get("/:id/attachments/:attachmentId/download", downloadAttachment);
+router.delete("/:id/attachments/:attachmentId", deleteAttachment);
+
+// ============= REVIEW ROUTES =============
+router.get("/:id/reviews", getTaskReviews);
+router.post("/:id/reviews", addReview);
+router.put("/:id/reviews/:reviewId", updateReview);
+router.delete("/:id/reviews/:reviewId", deleteReview);
+router.post("/:id/reviews/:reviewId/respond", respondToReview);
 
 // ============= DELETE TASK =============
 router.delete("/:id", requireRole("admin", "dept_manager"), deleteTask);

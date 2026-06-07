@@ -66,6 +66,13 @@ const taskSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+taskSchema.add({
+  commentsCount: { type: Number, default: 0 },
+  attachmentsCount: { type: Number, default: 0 },
+  reviewsCount: { type: Number, default: 0 },
+  averageRating: { type: Number, default: 0 },
+});
+
 // Indexes
 taskSchema.index({ assignedTo: 1 });
 taskSchema.index({ departmentId: 1 });
