@@ -535,16 +535,13 @@ const completeOnboarding = async (req, res) => {
 const updateMyProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { fullName, phoneNumber, employeeId, departmentId, bio, position, location } = req.body;
+    const { fullName, phoneNumber, employeeId, departmentId } = req.body;
 
     const updates = {};
-    if (fullName !== undefined) updates.fullName = fullName;
-    if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
-    if (employeeId !== undefined) updates.employeeId = employeeId;
-    if (departmentId !== undefined) updates.departmentId = departmentId;
-    if (bio !== undefined) updates.bio = bio;
-    if (position !== undefined) updates.position = position;
-    if (location !== undefined) updates.location = location;
+    if (fullName) updates.fullName = fullName;
+    if (phoneNumber) updates.phoneNumber = phoneNumber;
+    if (employeeId) updates.employeeId = employeeId;
+    if (departmentId) updates.departmentId = departmentId;
 
     const user = await User.findByIdAndUpdate(
       userId,

@@ -64,6 +64,7 @@ app.use(limiter);
 // Static files
 app.use("/uploads", express.static("uploads"));
 
+
 // Routes
 const authRoutes = require("./src/routes/auth.routes");
 const userRoutes = require("./src/routes/user.routes");
