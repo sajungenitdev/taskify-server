@@ -37,7 +37,7 @@ app.use(
       const allowedOrigins = [
         "http://localhost:3000",
         "http://localhost:5000",
-        "https://taskify-frontend-delta.vercel.app",
+        "https://taskify-frontend-alpha.vercel.app",
         "https://taskify-server-5gat.onrender.com",
         undefined,
       ];
