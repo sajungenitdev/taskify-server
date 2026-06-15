@@ -139,6 +139,7 @@ const resourceRoutes = require("./src/routes/resource.routes");
 const templateRoutes = require("./src/routes/template.routes");
 const roleRoutes = require("./src/routes/role.routes");
 const notificationRoutes = require("./src/routes/notification.routes");
+const performanceRoutes = require("./src/routes/performance.routes");
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -150,6 +151,7 @@ app.use("/api/v1/resources", resourceRoutes);
 app.use("/api/v1/templates", templateRoutes);
 app.use("/api/v1/roles", roleRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/performance", performanceRoutes);
 
 // Health check
 app.get("/health", (req, res) => {
