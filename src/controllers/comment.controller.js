@@ -1,6 +1,71 @@
 const { Comment } = require("../models/Comment.model");
 const { Task } = require("../models/Task.model");
+const { User } = require("../models/User.model");
 const mongoose = require("mongoose");
+const { createNotification } = require("./notification.controller");
+const { sendEmail } = require("../config/email.config");
+
+// Email template for comment notification
+const getCommentEmailTemplate = (
+  task,
+  comment,
+  commenter,
+  recipient,
+  isReply = false,
+) => {
+  const title = isReply
+    ? "💬 New Reply to Your Comment"
+    : "💬 New Comment on Task";
+  const description = isReply
+    ? `${commenter.fullName} replied to your comment on task "${task.title}"`
+    : `${commenter.fullName} added a comment to task "${task.title}"`;
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; }
+        .comment-box { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea; }
+        .task-info { background: #e9ecef; padding: 10px 15px; border-radius: 5px; margin: 10px 0; font-size: 14px; }
+        .button { display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+        .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef; text-align: center; font-size: 12px; color: #6c757d; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>${title}</h1>
+      </div>
+      <div class="content">
+        <p>Hello <strong>${recipient.fullName}</strong>,</p>
+        <p>${description}</p>
+        
+        <div class="task-info">
+          <strong>Task:</strong> ${task.title}<br>
+          <strong>Project:</strong> ${task.projectId?.name || "N/A"}<br>
+          <strong>Status:</strong> ${task.status.replace(/_/g, " ").toUpperCase()}
+        </div>
+        
+        <div class="comment-box">
+          <p style="font-style: italic; margin: 0;">"${comment.content}"</p>
+          <p style="margin-top: 10px; font-size: 12px; color: #666;">— ${commenter.fullName}</p>
+        </div>
+        
+        <a href="${process.env.FRONTEND_URL}/tasks/${task._id}" class="button">View Task & Reply →</a>
+        
+        <div class="footer">
+          <p>You're receiving this because you're assigned to this task or have commented on it.</p>
+          <p>To unsubscribe from notifications, update your profile settings.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
 
 // Get all comments for a task (with nested replies)
 const getTaskComments = async (req, res) => {
@@ -39,7 +104,6 @@ const getTaskComments = async (req, res) => {
             commentMap[commentObj._id.toString()],
           );
         } else {
-          // If parent not found, treat as root comment
           rootComments.push(commentMap[commentObj._id.toString()]);
         }
       } else {
@@ -60,6 +124,134 @@ const getTaskComments = async (req, res) => {
   }
 };
 
+// Send comment notifications to all relevant users
+const sendCommentNotifications = async (
+  task,
+  comment,
+  commenter,
+  parentComment = null,
+) => {
+  try {
+    const recipients = new Set(); // Use Set to avoid duplicates
+
+    // 1. Notify task assignee - ensure we're using the ID string
+    if (
+      task.assignedTo &&
+      task.assignedTo.toString() !== commenter._id.toString()
+    ) {
+      const assigneeId = task.assignedTo._id || task.assignedTo;
+      recipients.add(assigneeId.toString());
+    }
+
+    // 2. Notify task creator (assignedBy)
+    if (
+      task.assignedBy &&
+      task.assignedBy.toString() !== commenter._id.toString()
+    ) {
+      const creatorId = task.assignedBy._id || task.assignedBy;
+      recipients.add(creatorId.toString());
+    }
+
+    // 3. If this is a reply, notify the parent comment author
+    if (
+      parentComment &&
+      parentComment.author &&
+      parentComment.author.toString() !== commenter._id.toString()
+    ) {
+      const parentAuthorId = parentComment.author._id || parentComment.author;
+      recipients.add(parentAuthorId.toString());
+    }
+
+    // 4. Get all users who have commented on this task (excluding current commenter)
+    const previousCommenters = await Comment.find({
+      taskId: task._id,
+      author: { $ne: commenter._id },
+    }).distinct("author");
+
+    previousCommenters.forEach((commenterId) => {
+      if (commenterId && commenterId.toString() !== commenter._id.toString()) {
+        recipients.add(commenterId.toString());
+      }
+    });
+
+    // Convert Set to Array of valid ObjectIds
+    const recipientIds = Array.from(recipients).filter(
+      (id) => id && id.length === 24,
+    );
+
+    if (recipientIds.length === 0) {
+      console.log("No recipients to notify for comment");
+      return true;
+    }
+
+    // Get user details for all recipients
+    const recipientUsers = await User.find({
+      _id: { $in: recipientIds },
+      isActive: true,
+    }).select("_id fullName email");
+
+    console.log(
+      `📧 Sending comment notifications to ${recipientUsers.length} recipients`,
+    );
+
+    // Send notifications to each recipient
+    for (const recipient of recipientUsers) {
+      // Skip if recipient is the commenter
+      if (recipient._id.toString() === commenter._id.toString()) {
+        continue;
+      }
+
+      // Create in-app notification
+      await createNotification({
+        userId: recipient._id,
+        title: parentComment
+          ? "New Reply to Your Comment"
+          : "New Comment on Task",
+        message: parentComment
+          ? `${commenter.fullName} replied to your comment on "${task.title}"`
+          : `${commenter.fullName} commented on "${task.title}"`,
+        type: "info",
+        category: "comment",
+        taskId: task._id,
+        taskTitle: task.title,
+        actionUrl: `/tasks/${task._id}`,
+        metadata: {
+          commentId: comment._id,
+          commentContent: comment.content.substring(0, 100),
+          commenter: commenter.fullName,
+          isReply: !!parentComment,
+        },
+      });
+
+      // Send email notification
+      const emailTemplate = getCommentEmailTemplate(
+        task,
+        comment,
+        commenter,
+        recipient,
+        !!parentComment,
+      );
+      await sendEmail(
+        recipient.email,
+        parentComment
+          ? `💬 New Reply: ${task.title}`
+          : `💬 New Comment: ${task.title}`,
+        emailTemplate,
+      );
+
+      console.log(`📧 Comment notification sent to ${recipient.email}`);
+    }
+
+    console.log(
+      `✅ Sent comment notifications to ${recipientUsers.length} recipients`,
+    );
+    return true;
+  } catch (error) {
+    console.error("Error sending comment notifications:", error);
+    return false;
+  }
+};
+
 // Add a comment to a task
 const addComment = async (req, res) => {
   try {
@@ -72,17 +264,36 @@ const addComment = async (req, res) => {
         .json({ success: false, message: "Comment content is required" });
     }
 
-    // Verify task exists
-    const task = await Task.findById(taskId);
+    // Verify task exists and get full details
+    const task = await Task.findById(taskId)
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code");
+
     if (!task) {
       return res
         .status(404)
         .json({ success: false, message: "Task not found" });
     }
 
-    // If this is a reply, verify parent comment exists
+    // Get commenter details
+    const commenter = await User.findById(req.user._id).select(
+      "fullName email",
+    );
+
+    if (!commenter) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Check if this is a reply
+    let parentComment = null;
     if (parentCommentId) {
-      const parentComment = await Comment.findById(parentCommentId);
+      parentComment = await Comment.findById(parentCommentId).populate(
+        "author",
+        "fullName email",
+      );
       if (!parentComment) {
         return res
           .status(404)
@@ -90,6 +301,7 @@ const addComment = async (req, res) => {
       }
     }
 
+    // Create the comment
     const comment = await Comment.create({
       taskId,
       content: content.trim(),
@@ -107,9 +319,17 @@ const addComment = async (req, res) => {
       "fullName email avatar",
     );
 
+    // Send notifications (email + in-app)
+    await sendCommentNotifications(
+      task,
+      populatedComment,
+      commenter,
+      parentComment,
+    );
+
     res.status(201).json({
       success: true,
-      message: "Comment added successfully",
+      message: "Comment added successfully and notifications sent",
       data: populatedComment,
     });
   } catch (error) {
@@ -191,12 +411,10 @@ const deleteComment = async (req, res) => {
       comment.author.toString() !== req.user._id.toString() &&
       !["admin", "super_admin", "dept_manager"].includes(req.user.role)
     ) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Unauthorized to delete this comment",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized to delete this comment",
+      });
     }
 
     // Count how many comments will be deleted (including replies)

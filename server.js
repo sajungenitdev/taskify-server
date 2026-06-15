@@ -33,7 +33,7 @@ const limiter = rateLimit({
 // Middleware
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin for uploads
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
 app.use(
@@ -95,14 +95,12 @@ app.use(
   "/uploads",
   express.static(uploadsPath, {
     setHeaders: (res, filePath) => {
-      // Set proper content type for images
       if (filePath.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
         res.setHeader(
           "Content-Type",
           `image/${path.extname(filePath).slice(1)}`,
         );
       }
-      // Allow caching for better performance
       res.setHeader("Cache-Control", "public, max-age=31536000");
     },
   }),
@@ -118,7 +116,7 @@ app.get("/test-uploads", (req, res) => {
       uploadsPath: uploadsPath,
       tasksPath: tasksUploadsPath,
       filesCount: files.length,
-      files: files.slice(0, 20), // Show first 20 files
+      files: files.slice(0, 20),
       staticUrl: "/uploads/tasks/",
       serverUrl: `${req.protocol}://${req.get("host")}`,
     });
@@ -140,6 +138,7 @@ const projectRoutes = require("./src/routes/project.routes");
 const resourceRoutes = require("./src/routes/resource.routes");
 const templateRoutes = require("./src/routes/template.routes");
 const roleRoutes = require("./src/routes/role.routes");
+const notificationRoutes = require("./src/routes/notification.routes");
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -150,6 +149,7 @@ app.use("/api/v1/projects", projectRoutes);
 app.use("/api/v1/resources", resourceRoutes);
 app.use("/api/v1/templates", templateRoutes);
 app.use("/api/v1/roles", roleRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 
 // Health check
 app.get("/health", (req, res) => {
@@ -282,6 +282,15 @@ const startServer = async () => {
     console.log(
       "\n═══════════════════════════════════════════════════════════\n",
     );
+
+    // START SCHEDULED JOBS AFTER SERVER IS RUNNING
+    try {
+      const { startScheduledJobs } = require("./src/services/notification.service");
+      startScheduledJobs();
+      console.log("✅ Notification scheduled jobs started");
+    } catch (error) {
+      console.error("⚠️ Failed to start scheduled jobs:", error.message);
+    }
   });
 };
 

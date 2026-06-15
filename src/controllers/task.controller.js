@@ -2,6 +2,8 @@ const { Task } = require("../models/Task.model");
 const { User } = require("../models/User.model");
 const { Project } = require("../models/Project.model");
 const mongoose = require("mongoose");
+const { NotificationService } = require("../services/notification.service");
+const { createNotification } = require("./notification.controller");
 
 // Get tasks based on user role
 const getTasks = async (req, res) => {
@@ -49,8 +51,10 @@ const getTasks = async (req, res) => {
         ...query,
         status: "in_progress",
       }),
+      submitted: await Task.countDocuments({ ...query, status: "submitted" }),
       completed: await Task.countDocuments({ ...query, status: "completed" }),
       overdue: await Task.countDocuments({ ...query, status: "overdue" }),
+      rejected: await Task.countDocuments({ ...query, status: "rejected" }),
     };
 
     res.json({
@@ -88,8 +92,10 @@ const getMyTasks = async (req, res) => {
       total: tasks.length,
       pending: tasks.filter((t) => t.status === "pending").length,
       inProgress: tasks.filter((t) => t.status === "in_progress").length,
+      submitted: tasks.filter((t) => t.status === "submitted").length,
       completed: tasks.filter((t) => t.status === "completed").length,
       overdue: tasks.filter((t) => t.status === "overdue").length,
+      rejected: tasks.filter((t) => t.status === "rejected").length,
     };
 
     res.json({
@@ -216,9 +222,12 @@ const createTask = async (req, res) => {
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code");
 
+    // SEND NOTIFICATION - Task Assigned
+    await NotificationService.sendTaskAssigned(populatedTask._id);
+
     res.status(201).json({
       success: true,
-      message: "Task created successfully",
+      message: "Task created successfully and notification sent",
       data: populatedTask,
     });
   } catch (error) {
@@ -289,13 +298,11 @@ const updateTask = async (req, res) => {
   }
 };
 
-// Update task status - FIXED VERSION
+// Update task status
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-
-    console.log(`[DEBUG] Updating task ${id} to status: ${status}`);
+    const { status, rejectionReason } = req.body;
 
     const validStatuses = [
       "pending",
@@ -313,29 +320,59 @@ const updateTaskStatus = async (req, res) => {
       });
     }
 
-    // Use findByIdAndUpdate with $set to avoid validation issues
-    const task = await Task.findByIdAndUpdate(
-      id,
-      { $set: { status: status } }, // Use $set to only update status
-      { new: true, runValidators: false }, // Disable validators for status update
-    )
+    // Get old task before update
+    const oldTask = await Task.findById(id)
       .populate("assignedTo", "fullName email")
-      .populate("projectId", "name code");
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code departmentId");
 
-    if (!task) {
+    if (!oldTask) {
       return res.status(404).json({
         success: false,
         message: "Task not found",
       });
     }
+    const oldStatus = oldTask.status;
 
-    console.log(`[DEBUG] Task updated successfully: ${task.title}`);
+    // Update task
+    const task = await Task.findByIdAndUpdate(
+      id,
+      { $set: { status: status } },
+      { new: true, runValidators: false },
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code");
 
-    // Update project progress if status changed to/from completed
-    if (status === "completed") {
+    // Update project progress
+    if (status === "completed" && oldStatus !== "completed") {
       await Project.findByIdAndUpdate(task.projectId, {
         $inc: { completedTasks: 1 },
       });
+    }
+
+    // SEND NOTIFICATIONS
+    await NotificationService.sendTaskStatusUpdate(
+      id,
+      oldStatus,
+      status,
+      req.user._id,
+    );
+
+    // Special notifications based on status
+    if (status === "submitted") {
+      await NotificationService.sendTaskSubmitted(id, req.user._id);
+
+      // Also notify all managers, admins, supervisors, and HR
+      await notifyAllManagersAndAdmins(task, req.user);
+    } else if (status === "completed") {
+      await NotificationService.sendTaskApproved(id, req.user._id);
+    } else if (status === "rejected" && rejectionReason) {
+      await NotificationService.sendTaskRejected(
+        id,
+        req.user._id,
+        rejectionReason,
+      );
     }
 
     res.json({
@@ -345,10 +382,59 @@ const updateTaskStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("Update status error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error: " + error.message,
-    });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error: " + error.message });
+  }
+};
+
+// the helper function:
+const notifyAllManagersAndAdmins = async (task, submitter) => {
+  try {
+    // Get all users with management roles
+    const managementRoles = [
+      "admin",
+      "super_admin",
+      "dept_manager",
+      "project_manager",
+      "line_manager",
+      "hr_manager",
+    ];
+
+    const managers = await User.find({
+      role: { $in: managementRoles },
+      isActive: true,
+    }).select("_id fullName email");
+
+    const submitterName = submitter?.fullName || "Employee";
+
+    for (const manager of managers) {
+      // Don't notify the submitter if they are also a manager
+      if (manager._id.toString() === submitter?._id?.toString()) continue;
+
+      await createNotification({
+        userId: manager._id,
+        title: "Task Ready for Review",
+        message: `${submitterName} has submitted task "${task.title}" for review. Please review and approve/reject.`,
+        type: "warning",
+        category: "approval",
+        taskId: task._id,
+        taskTitle: task.title,
+        actionUrl: `/tasks/${task._id}`,
+        metadata: {
+          submitter: submitterName,
+          projectName: task.projectId?.name,
+          priority: task.priority,
+          deadline: task.deadline,
+        },
+      });
+    }
+
+    console.log(
+      `✅ Notified ${managers.length} managers/admins about task submission`,
+    );
+  } catch (error) {
+    console.error("Error notifying managers:", error);
   }
 };
 
@@ -598,9 +684,16 @@ const bulkCreateTasks = async (req, res) => {
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code");
 
+    // Send notifications for each created task
+    for (const task of populatedTasks) {
+      await NotificationService.sendTaskAssigned(task._id);
+      // Add delay to avoid overwhelming email server
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
     res.status(201).json({
       success: true,
-      message: `Successfully created ${createdTasks.length} tasks`,
+      message: `Successfully created ${createdTasks.length} tasks and sent notifications`,
       data: populatedTasks,
       stats: {
         total: createdTasks.length,
@@ -793,9 +886,15 @@ const importTasksFromFile = async (req, res) => {
       });
     }
 
+    // Send notifications for successfully created tasks
+    for (const task of results.successful) {
+      await NotificationService.sendTaskAssigned(task._id);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
     res.json({
       success: true,
-      message: `Imported ${results.successful.length} out of ${results.total} tasks`,
+      message: `Imported ${results.successful.length} out of ${results.total} tasks and sent notifications`,
       data: results,
     });
   } catch (error) {
@@ -811,7 +910,7 @@ const importTasksFromFile = async (req, res) => {
 const reorderTasks = async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { taskOrders } = req.body; // Array of { taskId, order }
+    const { taskOrders } = req.body;
 
     if (!taskOrders || !Array.isArray(taskOrders)) {
       return res.status(400).json({
