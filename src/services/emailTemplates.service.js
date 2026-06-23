@@ -169,6 +169,156 @@ class EmailTemplates {
     `;
     return this.getBaseTemplate(content, `Task Rejected: ${task.title}`);
   }
+  static leaveApplied(leave, user, type) {
+    const isEmployee = type === "employee";
+    const isApprover = type === "approver";
+    const isSubstitute = type === "substitute";
+
+    let title, headerColor, icon, message;
+
+    if (isEmployee) {
+      title = "Leave Request Submitted";
+      headerColor = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+      icon = "📋";
+      message = "Your leave request has been submitted successfully";
+    } else if (isApprover) {
+      title = "New Leave Request";
+      headerColor = "linear-gradient(135deg, #f59e0b 0%, #dc2626 100%)";
+      icon = "👤";
+      message = `${leave.employeeName} has requested leave`;
+    } else if (isSubstitute) {
+      title = "Assigned as Substitute";
+      headerColor = "linear-gradient(135deg, #06b6d4 0%, #0284c7 100%)";
+      icon = "🔄";
+      message = `You've been assigned as substitute for ${leave.employeeName}`;
+    }
+
+    const content = `
+    <div class="header" style="background: ${headerColor};">
+      <h1>${icon} ${title}</h1>
+      <p>${message}</p>
+    </div>
+    <div class="content">
+      <p>Hello <strong>${user.fullName}</strong>,</p>
+      ${isApprover ? `<p><strong>${leave.employeeName}</strong> (${leave.employeeEmail}) has submitted a leave request.</p>` : ""}
+      ${isSubstitute ? `<p><strong>${leave.employeeName}</strong> has selected you as their substitute during their leave period.</p>` : ""}
+      <div class="task-details">
+        <h2 style="color: #667eea; margin-bottom: 15px;">Leave Details</h2>
+        <div class="info-row"><span class="info-label">Leave Type:</span><span class="info-value">${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)}</span></div>
+        <div class="info-row"><span class="info-label">Start Date:</span><span class="info-value">${new Date(leave.startDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">End Date:</span><span class="info-value">${new Date(leave.endDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">Total Days:</span><span class="info-value">${leave.totalDays} day(s)</span></div>
+        ${leave.isHalfDay ? `<div class="info-row"><span class="info-label">Half Day:</span><span class="info-value">Yes (${leave.halfDayType?.replace("_", " ") || "N/A"})</span></div>` : ""}
+        <div class="info-row"><span class="info-label">Reason:</span><span class="info-value">${leave.reason}</span></div>
+        ${leave.additionalDetails ? `<div class="info-row"><span class="info-label">Additional Details:</span><span class="info-value">${leave.additionalDetails}</span></div>` : ""}
+        ${leave.substituteName ? `<div class="info-row"><span class="info-label">Substitute:</span><span class="info-value">${leave.substituteName} (${leave.substituteEmail})</span></div>` : ""}
+      </div>
+      <div style="text-align: center;">
+        ${isEmployee ? `<a href="${process.env.FRONTEND_URL}/leaves" class="button">View My Leaves →</a>` : ""}
+        ${isApprover ? `<a href="${process.env.FRONTEND_URL}/reports/leaves" class="button">Review Leave Requests →</a>` : ""}
+        ${isSubstitute ? `<a href="${process.env.FRONTEND_URL}/leaves" class="button">View Details →</a>` : ""}
+      </div>
+    </div>
+  `;
+    return this.getBaseTemplate(content, title);
+  }
+  // Leave Approved Email Template
+  static leaveApproved(leave, employee, approver) {
+    const content = `
+    <div class="header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+      <h1>✅ Leave Approved</h1>
+      <p>Your leave request has been approved</p>
+    </div>
+    <div class="content">
+      <p>Hello <strong>${employee.fullName}</strong>,</p>
+      <p>Your ${leave.type} leave request has been <strong>approved</strong> by <strong>${approver.fullName}</strong>.</p>
+      <div class="task-details">
+        <h2 style="color: #667eea; margin-bottom: 15px;">Leave Details</h2>
+        <div class="info-row"><span class="info-label">Leave Type:</span><span class="info-value">${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)}</span></div>
+        <div class="info-row"><span class="info-label">Start Date:</span><span class="info-value">${new Date(leave.startDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">End Date:</span><span class="info-value">${new Date(leave.endDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">Total Days:</span><span class="info-value">${leave.totalDays} day(s)</span></div>
+      </div>
+      ${leave.substituteName ? `<div style="background: #dbeafe; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="color: #1e40af;">📌 <strong>${leave.substituteName}</strong> has been assigned as your substitute during this leave.</p></div>` : ""}
+      <div style="text-align: center;"><a href="${process.env.FRONTEND_URL}/leaves" class="button">View My Leaves →</a></div>
+    </div>
+  `;
+    return this.getBaseTemplate(content, "Leave Approved");
+  }
+  // Leave Rejected Email Template
+  static leaveRejected(leave, employee, approver, reason) {
+    const content = `
+    <div class="header" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+      <h1>❌ Leave Rejected</h1>
+      <p>Your leave request has been rejected</p>
+    </div>
+    <div class="content">
+      <p>Hello <strong>${employee.fullName}</strong>,</p>
+      <p>Your ${leave.type} leave request has been <strong>rejected</strong> by <strong>${approver.fullName}</strong>.</p>
+      <div style="background: #fee2e2; padding: 20px; border-radius: 12px; margin: 20px 0;">
+        <p style="color: #991b1b; font-weight: bold;">📝 Reason for Rejection:</p>
+        <p>${reason}</p>
+      </div>
+      <div class="task-details">
+        <h2 style="color: #667eea; margin-bottom: 15px;">Leave Details</h2>
+        <div class="info-row"><span class="info-label">Leave Type:</span><span class="info-value">${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)}</span></div>
+        <div class="info-row"><span class="info-label">Start Date:</span><span class="info-value">${new Date(leave.startDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">End Date:</span><span class="info-value">${new Date(leave.endDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">Total Days:</span><span class="info-value">${leave.totalDays} day(s)</span></div>
+      </div>
+      <div style="text-align: center;"><a href="${process.env.FRONTEND_URL}/leaves" class="button">View My Leaves →</a></div>
+    </div>
+  `;
+    return this.getBaseTemplate(content, "Leave Rejected");
+  }
+  // Leave Cancelled Email Template
+  static leaveCancelled(leave, employee) {
+    const content = `
+    <div class="header" style="background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);">
+      <h1>🔄 Leave Cancelled</h1>
+      <p>Your leave request has been cancelled</p>
+    </div>
+    <div class="content">
+      <p>Hello <strong>${employee.fullName}</strong>,</p>
+      <p>Your ${leave.type} leave request has been <strong>cancelled</strong>.</p>
+      <div class="task-details">
+        <h2 style="color: #667eea; margin-bottom: 15px;">Leave Details</h2>
+        <div class="info-row"><span class="info-label">Leave Type:</span><span class="info-value">${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)}</span></div>
+        <div class="info-row"><span class="info-label">Start Date:</span><span class="info-value">${new Date(leave.startDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">End Date:</span><span class="info-value">${new Date(leave.endDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">Total Days:</span><span class="info-value">${leave.totalDays} day(s)</span></div>
+      </div>
+      <div style="text-align: center;"><a href="${process.env.FRONTEND_URL}/leaves" class="button">View My Leaves →</a></div>
+    </div>
+  `;
+    return this.getBaseTemplate(content, "Leave Cancelled");
+  }
+  // Leave Reminder Email Template
+  static leaveReminder(leave, employee, daysUntil) {
+    const content = `
+    <div class="header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+      <h1>📅 Leave Reminder</h1>
+      <p>Your leave starts soon</p>
+    </div>
+    <div class="content">
+      <p>Hello <strong>${employee.fullName}</strong>,</p>
+      <div style="background: #fef3c7; padding: 20px; border-radius: 12px; margin: 20px 0; text-align: center;">
+        <p style="font-size: 24px; font-weight: bold; color: #f59e0b;">${daysUntil} day(s) remaining</p>
+        <p style="color: #92400e;">Your ${leave.type} leave starts on ${new Date(leave.startDate).toLocaleDateString()}</p>
+      </div>
+      <div class="task-details">
+        <h2 style="color: #667eea; margin-bottom: 15px;">Leave Details</h2>
+        <div class="info-row"><span class="info-label">Leave Type:</span><span class="info-value">${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)}</span></div>
+        <div class="info-row"><span class="info-label">Start Date:</span><span class="info-value">${new Date(leave.startDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">End Date:</span><span class="info-value">${new Date(leave.endDate).toLocaleDateString()}</span></div>
+        <div class="info-row"><span class="info-label">Total Days:</span><span class="info-value">${leave.totalDays} day(s)</span></div>
+      </div>
+      ${leave.substituteName ? `<div style="background: #dbeafe; padding: 15px; border-radius: 8px; margin: 20px 0;"><p style="color: #1e40af;">📌 <strong>${leave.substituteName}</strong> is assigned as your substitute.</p></div>` : ""}
+      <div style="text-align: center;"><a href="${process.env.FRONTEND_URL}/leaves" class="button">View Leave Details →</a></div>
+    </div>
+  `;
+    return this.getBaseTemplate(content, "Leave Reminder");
+  }
 }
 
 module.exports = EmailTemplates;

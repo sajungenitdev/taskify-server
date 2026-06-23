@@ -13,9 +13,9 @@ dotenv.config();
 
 const app = express();
 
-// Rate limiting
+// ==================== RATE LIMITING ====================
 const limiter = rateLimit({
-  windowMs: 60 * 1000,
+  windowMs: 60 * 1000, // 1 minute
   max: process.env.NODE_ENV === "production" ? 100 : 1000,
   message: {
     success: false,
@@ -30,7 +30,7 @@ const limiter = rateLimit({
   },
 });
 
-// Middleware
+// ==================== MIDDLEWARE ====================
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -58,7 +58,6 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   }),
 );
-
 app.options("*", cors());
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
@@ -66,28 +65,23 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 app.use(limiter);
 
-// Static files - Serve uploads directory
+// ==================== STATIC FILES ====================
 const uploadsPath = path.join(__dirname, "uploads");
 console.log(`📁 Uploads directory: ${uploadsPath}`);
 
-// Create uploads directory if it doesn't exist
-if (!fs.existsSync(uploadsPath)) {
-  fs.mkdirSync(uploadsPath, { recursive: true });
-  console.log("📁 Created uploads directory");
-}
+// Create upload directories
+const directories = [
+  { path: uploadsPath, name: "uploads" },
+  { path: path.join(uploadsPath, "tasks"), name: "tasks" },
+  { path: path.join(uploadsPath, "avatars"), name: "avatars" },
+  { path: path.join(uploadsPath, "signatures"), name: "signatures" }, // Added for leave signatures
+];
 
-// Create tasks subdirectory
-const tasksUploadsPath = path.join(uploadsPath, "tasks");
-if (!fs.existsSync(tasksUploadsPath)) {
-  fs.mkdirSync(tasksUploadsPath, { recursive: true });
-  console.log("📁 Created tasks uploads directory");
-}
-
-// Create avatars subdirectory (for user avatars)
-const avatarsUploadsPath = path.join(uploadsPath, "avatars");
-if (!fs.existsSync(avatarsUploadsPath)) {
-  fs.mkdirSync(avatarsUploadsPath, { recursive: true });
-  console.log("📁 Created avatars uploads directory");
+for (const dir of directories) {
+  if (!fs.existsSync(dir.path)) {
+    fs.mkdirSync(dir.path, { recursive: true });
+    console.log(`📁 Created ${dir.name} directory`);
+  }
 }
 
 // Serve static files
@@ -95,7 +89,7 @@ app.use(
   "/uploads",
   express.static(uploadsPath, {
     setHeaders: (res, filePath) => {
-      if (filePath.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+      if (filePath.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
         res.setHeader(
           "Content-Type",
           `image/${path.extname(filePath).slice(1)}`,
@@ -106,15 +100,16 @@ app.use(
   }),
 );
 
-// Test endpoint for uploads (for debugging)
+// ==================== TEST ENDPOINTS ====================
 app.get("/test-uploads", (req, res) => {
   try {
-    const files = fs.readdirSync(tasksUploadsPath);
+    const tasksPath = path.join(uploadsPath, "tasks");
+    const files = fs.existsSync(tasksPath) ? fs.readdirSync(tasksPath) : [];
     res.json({
       success: true,
       message: "Uploads directory is accessible",
       uploadsPath: uploadsPath,
-      tasksPath: tasksUploadsPath,
+      tasksPath: tasksPath,
       filesCount: files.length,
       files: files.slice(0, 20),
       staticUrl: "/uploads/tasks/",
@@ -129,7 +124,7 @@ app.get("/test-uploads", (req, res) => {
   }
 });
 
-// Routes
+// ==================== ROUTES ====================
 const authRoutes = require("./src/routes/auth.routes");
 const userRoutes = require("./src/routes/user.routes");
 const departmentRoutes = require("./src/routes/department.routes");
@@ -140,6 +135,9 @@ const templateRoutes = require("./src/routes/template.routes");
 const roleRoutes = require("./src/routes/role.routes");
 const notificationRoutes = require("./src/routes/notification.routes");
 const performanceRoutes = require("./src/routes/performance.routes");
+const aiRoutes = require("./src/routes/ai.routes");
+const reportRoutes = require("./src/routes/report.routes");
+const leaveRoutes = require("./src/routes/leave.routes");
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -152,8 +150,11 @@ app.use("/api/v1/templates", templateRoutes);
 app.use("/api/v1/roles", roleRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/performance", performanceRoutes);
+app.use("/api/v1/ai", aiRoutes);
+app.use("/api/v1/reports", reportRoutes);
+app.use("/api/v1/leaves", leaveRoutes);
 
-// Health check
+// ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
   res.json({
     success: true,
@@ -161,6 +162,8 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
+    mongodb:
+      mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
     uploadsDir: fs.existsSync(uploadsPath),
     endpoints: {
       tasks: "/api/v1/tasks",
@@ -170,12 +173,13 @@ app.get("/health", (req, res) => {
       departments: "/api/v1/departments",
       auth: "/api/v1/auth",
       users: "/api/v1/users",
+      leaves: "/api/v1/leaves",
       testUploads: "/test-uploads",
     },
   });
 });
 
-// Root endpoint
+// ==================== ROOT ENDPOINT ====================
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -190,13 +194,14 @@ app.get("/", (req, res) => {
       projects: "/api/v1/projects",
       resources: "/api/v1/resources",
       templates: "/api/v1/templates",
+      leaves: "/api/v1/leaves",
       health: "/health",
       testUploads: "/test-uploads",
     },
   });
 });
 
-// 404 handler
+// ==================== 404 HANDLER ====================
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -205,18 +210,23 @@ app.use((req, res) => {
   });
 });
 
-// Global error handler
+// ==================== GLOBAL ERROR HANDLER ====================
 app.use((err, req, res, next) => {
-  console.error("Error:", err.message);
-  console.error("Stack:", err.stack);
-  res.status(err.status || 500).json({
+  console.error("❌ Error:", err.message);
+  console.error("📚 Stack:", err.stack);
+
+  const statusCode = err.status || 500;
+  const message = err.message || "Internal server error";
+
+  res.status(statusCode).json({
     success: false,
-    message: err.message || "Internal server error",
+    message: message,
     timestamp: new Date().toISOString(),
+    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
   });
 });
 
-// Database connection
+// ==================== DATABASE CONNECTION ====================
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
     await mongoose.connect(process.env.MONGODB_URI, {
@@ -238,7 +248,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
   }
 };
 
-// Start server
+// ==================== START SERVER ====================
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
@@ -255,9 +265,14 @@ const startServer = async () => {
   // Log uploads directory status
   console.log(`\n📁 Uploads directory: ${uploadsPath}`);
   console.log(`📁 Uploads exists: ${fs.existsSync(uploadsPath)}`);
-  console.log(`📁 Tasks uploads exists: ${fs.existsSync(tasksUploadsPath)}`);
   console.log(
-    `📁 Avatars uploads exists: ${fs.existsSync(avatarsUploadsPath)}`,
+    `📁 Tasks uploads exists: ${fs.existsSync(path.join(uploadsPath, "tasks"))}`,
+  );
+  console.log(
+    `📁 Avatars uploads exists: ${fs.existsSync(path.join(uploadsPath, "avatars"))}`,
+  );
+  console.log(
+    `📁 Signatures uploads exists: ${fs.existsSync(path.join(uploadsPath, "signatures"))}`,
   );
 
   app.listen(PORT, () => {
@@ -280,14 +295,17 @@ const startServer = async () => {
     console.log(
       `📝 Templates endpoint: http://localhost:${PORT}/api/v1/templates`,
     );
+    console.log(`📋 Leaves endpoint: http://localhost:${PORT}/api/v1/leaves`);
     console.log(`🧪 Test uploads:    http://localhost:${PORT}/test-uploads`);
     console.log(
       "\n═══════════════════════════════════════════════════════════\n",
     );
 
-    // START SCHEDULED JOBS AFTER SERVER IS RUNNING
+    // Start scheduled jobs
     try {
-      const { startScheduledJobs } = require("./src/services/notification.service");
+      const {
+        startScheduledJobs,
+      } = require("./src/services/notification.service");
       startScheduledJobs();
       console.log("✅ Notification scheduled jobs started");
     } catch (error) {
@@ -296,23 +314,28 @@ const startServer = async () => {
   });
 };
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
+// ==================== GRACEFUL SHUTDOWN ====================
+const gracefulShutdown = async () => {
   console.log("\n\n🛑 Shutting down gracefully...");
   if (mongoose.connection.readyState === 1) {
     await mongoose.connection.close();
     console.log("📦 MongoDB connection closed");
   }
   process.exit(0);
+};
+
+process.on("SIGINT", gracefulShutdown);
+process.on("SIGTERM", gracefulShutdown);
+
+// ==================== UNHANDLED REJECTIONS ====================
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise);
+  console.error("📚 Reason:", reason);
 });
 
-process.on("SIGTERM", async () => {
-  console.log("\n\n🛑 Shutting down gracefully...");
-  if (mongoose.connection.readyState === 1) {
-    await mongoose.connection.close();
-    console.log("📦 MongoDB connection closed");
-  }
-  process.exit(0);
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error);
+  // Don't exit the process, just log the error
 });
 
 startServer();

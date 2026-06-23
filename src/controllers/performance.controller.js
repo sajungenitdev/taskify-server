@@ -119,6 +119,27 @@ const getTaskStats = async (req, res) => {
     ).length;
     const onTimeRate = completed > 0 ? (onTimeTasks / completed) * 100 : 0;
 
+    // Calculate average completion time
+    const completedTasks = tasks.filter((t) => t.status === "completed");
+    let averageCompletionTime = 0;
+    if (completedTasks.length > 0) {
+      const totalTime = completedTasks.reduce((sum, t) => {
+        const created = new Date(t.createdAt);
+        const completed = new Date(t.updatedAt);
+        const diffHours = (completed - created) / (1000 * 60 * 60);
+        return sum + diffHours;
+      }, 0);
+      averageCompletionTime = totalTime / completedTasks.length;
+    }
+
+    // Calculate tasks by priority
+    const tasksByPriority = {
+      low: tasks.filter((t) => t.priority === "low").length,
+      normal: tasks.filter((t) => t.priority === "normal").length,
+      high: tasks.filter((t) => t.priority === "high").length,
+      urgent: tasks.filter((t) => t.priority === "urgent").length,
+    };
+
     const stats = {
       total,
       completed,
@@ -129,6 +150,8 @@ const getTaskStats = async (req, res) => {
       rejected,
       completionRate: Math.round(completionRate * 10) / 10,
       onTimeRate: Math.round(onTimeRate * 10) / 10,
+      averageCompletionTime: Math.round(averageCompletionTime * 10) / 10,
+      tasksByPriority,
     };
 
     res.json({ success: true, data: stats });
@@ -177,6 +200,7 @@ const getProductivityData = async (req, res) => {
         completed: 0,
         submitted: 0,
         hours: 0,
+        tasksCreated: 0,
       });
     }
 
@@ -186,7 +210,22 @@ const getProductivityData = async (req, res) => {
         const data = dateMap.get(dateKey);
         if (task.status === "completed") data.completed++;
         if (task.status === "submitted") data.submitted++;
-        data.hours += task.estimatedHours;
+        data.hours += task.estimatedHours || 0;
+        dateMap.set(dateKey, data);
+      }
+    }
+
+    // Count tasks created per day
+    const createdTasks = await Task.find({
+      assignedTo: userId,
+      createdAt: { $gte: startDate },
+    });
+
+    for (const task of createdTasks) {
+      const dateKey = task.createdAt.toISOString().split("T")[0];
+      if (dateMap.has(dateKey)) {
+        const data = dateMap.get(dateKey);
+        data.tasksCreated++;
         dateMap.set(dateKey, data);
       }
     }
@@ -239,6 +278,8 @@ const getCategoryStats = async (req, res) => {
         total: data.total,
         percentage: data.total > 0 ? (data.completed / data.total) * 100 : 0,
         color: colors[index % colors.length],
+        trend:
+          data.total > 5 && data.completed / data.total > 0.7 ? "up" : "stable",
       }),
     );
 
@@ -253,13 +294,19 @@ const getCategoryStats = async (req, res) => {
 const getMonthlyStats = async (req, res) => {
   try {
     const userId = req.user._id;
+    const { period = "month" } = req.query;
 
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    let monthsToShow = 6;
+    if (period === "year") {
+      monthsToShow = 12;
+    }
+
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - monthsToShow);
 
     const tasks = await Task.find({
       assignedTo: userId,
-      createdAt: { $gte: sixMonthsAgo },
+      createdAt: { $gte: startDate },
     });
 
     const monthNames = [
@@ -278,45 +325,123 @@ const getMonthlyStats = async (req, res) => {
     ];
     const monthMap = new Map();
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < monthsToShow; i++) {
       const date = new Date();
       date.setMonth(date.getMonth() - i);
-      const monthKey = date.getFullYear() + "-" + date.getMonth();
+      const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
       monthMap.set(monthKey, {
-        month: monthNames[date.getMonth()],
+        month: `${monthNames[date.getMonth()]} ${date.getFullYear()}`,
         tasks: 0,
         completed: 0,
         totalHours: 0,
+        tasksCreated: 0,
+        tasksCompleted: 0,
       });
     }
 
     for (const task of tasks) {
-      const monthKey =
-        task.createdAt.getFullYear() + "-" + task.createdAt.getMonth();
+      const monthKey = `${task.createdAt.getFullYear()}-${task.createdAt.getMonth()}`;
       if (monthMap.has(monthKey)) {
         const data = monthMap.get(monthKey);
         data.tasks++;
-        if (task.status === "completed") data.completed++;
-        data.totalHours += task.estimatedHours;
+        if (task.status === "completed") {
+          data.completed++;
+          data.tasksCompleted++;
+        }
+        data.totalHours += task.estimatedHours || 0;
+        data.tasksCreated++;
         monthMap.set(monthKey, data);
       }
     }
 
     const monthlyStats = Array.from(monthMap.values())
       .reverse()
-      .map(function (data) {
-        return {
-          month: data.month,
-          tasks: data.tasks,
-          completionRate:
-            data.tasks > 0 ? (data.completed / data.tasks) * 100 : 0,
-          avgHours: data.tasks > 0 ? data.totalHours / data.tasks : 0,
-        };
-      });
+      .map((data) => ({
+        month: data.month,
+        tasks: data.tasks,
+        completionRate:
+          data.tasks > 0 ? (data.completed / data.tasks) * 100 : 0,
+        avgHours: data.tasks > 0 ? data.totalHours / data.tasks : 0,
+        tasksCompleted: data.tasksCompleted,
+        tasksCreated: data.tasksCreated,
+      }));
 
     res.json({ success: true, data: monthlyStats });
   } catch (error) {
     console.error("Get monthly stats error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// Get yearly statistics (NEW)
+const getYearlyStats = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 5); // Last 5 years
+
+    const tasks = await Task.find({
+      assignedTo: userId,
+      createdAt: { $gte: startDate },
+    });
+
+    // Group by year
+    const yearMap = new Map();
+
+    for (const task of tasks) {
+      const year = task.createdAt.getFullYear().toString();
+      if (!yearMap.has(year)) {
+        yearMap.set(year, {
+          year: year,
+          totalTasks: 0,
+          completedTasks: 0,
+          totalHours: 0,
+          months: new Map(),
+        });
+      }
+
+      const yearData = yearMap.get(year);
+      yearData.totalTasks++;
+
+      if (task.status === "completed") {
+        yearData.completedTasks++;
+      }
+
+      yearData.totalHours += task.estimatedHours || 0;
+
+      // Also track monthly data within the year
+      const monthKey = `${task.createdAt.getMonth()}`;
+      if (!yearData.months.has(monthKey)) {
+        yearData.months.set(monthKey, {
+          month: task.createdAt.toLocaleString("default", { month: "short" }),
+          tasks: 0,
+          completed: 0,
+          hours: 0,
+        });
+      }
+      const monthData = yearData.months.get(monthKey);
+      monthData.tasks++;
+      if (task.status === "completed") {
+        monthData.completed++;
+      }
+      monthData.hours += task.estimatedHours || 0;
+    }
+
+    const yearlyStats = Array.from(yearMap.values()).map((yearData) => ({
+      year: yearData.year,
+      totalTasks: yearData.totalTasks,
+      completionRate:
+        yearData.totalTasks > 0
+          ? (yearData.completedTasks / yearData.totalTasks) * 100
+          : 0,
+      totalHours: Math.round(yearData.totalHours),
+      months: Array.from(yearData.months.values()),
+    }));
+
+    res.json({ success: true, data: yearlyStats });
+  } catch (error) {
+    console.error("Get yearly stats error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -327,15 +452,12 @@ const getAchievements = async (req, res) => {
     const userId = req.user._id;
 
     const tasks = await Task.find({ assignedTo: userId });
-    const completedTasks = tasks.filter(function (t) {
-      return t.status === "completed";
-    });
-    const onTimeTasks = tasks.filter(function (t) {
-      return (
+    const completedTasks = tasks.filter((t) => t.status === "completed");
+    const onTimeTasks = tasks.filter(
+      (t) =>
         t.status === "completed" &&
-        new Date(t.deadline) >= new Date(t.updatedAt)
-      );
-    });
+        new Date(t.deadline) >= new Date(t.updatedAt),
+    );
     const reviews = await Review.find({ reviewer: userId });
     const comments = await Comment.find({ author: userId });
 
@@ -346,20 +468,22 @@ const getAchievements = async (req, res) => {
       achievements.push({
         _id: "1",
         title: "Task Master",
-        description: "Completed " + completedTasks.length + " tasks",
+        description: `Completed ${completedTasks.length} tasks`,
         icon: "🏆",
         earnedAt: new Date().toISOString(),
         points: 100,
+        category: "productivity",
       });
     } else if (completedTasks.length >= 25) {
       achievements.push({
         _id: "1",
         title: "Task Master",
-        description: "Completed " + completedTasks.length + "/50 tasks",
+        description: `Completed ${completedTasks.length}/50 tasks`,
         icon: "🏆",
         earnedAt: new Date().toISOString(),
         points: 50,
         progress: (completedTasks.length / 50) * 100,
+        category: "productivity",
       });
     }
 
@@ -368,20 +492,20 @@ const getAchievements = async (req, res) => {
       achievements.push({
         _id: "2",
         title: "Early Bird",
-        description:
-          "Submitted " + onTimeTasks.length + " tasks before deadline",
+        description: `Submitted ${onTimeTasks.length} tasks before deadline`,
         icon: "🐦",
         earnedAt: new Date().toISOString(),
         points: 75,
+        category: "consistency",
       });
     }
 
     // Quality Champion
-    var totalRating = 0;
-    for (var i = 0; i < reviews.length; i++) {
+    let totalRating = 0;
+    for (let i = 0; i < reviews.length; i++) {
       totalRating += reviews[i].rating;
     }
-    var avgRating = reviews.length > 0 ? totalRating / reviews.length : 0;
+    const avgRating = reviews.length > 0 ? totalRating / reviews.length : 0;
 
     if (avgRating >= 4.5) {
       achievements.push({
@@ -391,6 +515,7 @@ const getAchievements = async (req, res) => {
         icon: "⭐",
         earnedAt: new Date().toISOString(),
         points: 100,
+        category: "quality",
       });
     }
 
@@ -399,10 +524,11 @@ const getAchievements = async (req, res) => {
       achievements.push({
         _id: "4",
         title: "Team Player",
-        description: "Added " + comments.length + " comments",
+        description: `Added ${comments.length} comments`,
         icon: "💬",
         earnedAt: new Date().toISOString(),
         points: 50,
+        category: "growth",
       });
     }
 
@@ -411,10 +537,26 @@ const getAchievements = async (req, res) => {
       achievements.push({
         _id: "5",
         title: "Consistent Performer",
-        description: "Completed " + tasks.length + " tasks total",
+        description: `Completed ${tasks.length} tasks total`,
         icon: "🔥",
         earnedAt: new Date().toISOString(),
         points: 80,
+        category: "consistency",
+      });
+    }
+
+    // Add more achievements if needed
+    if (achievements.length === 0) {
+      // If no achievements, add a default one
+      achievements.push({
+        _id: "0",
+        title: "Getting Started",
+        description: "Complete your first task to earn achievements",
+        icon: "🚀",
+        earnedAt: new Date().toISOString(),
+        points: 0,
+        progress: 0,
+        category: "growth",
       });
     }
 
@@ -430,10 +572,13 @@ const getRatings = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    const reviews = await Review.find({ reviewer: userId });
+    const reviews = await Review.find({ reviewer: userId }).populate(
+      "reviewer",
+      "fullName",
+    );
     const total = reviews.length;
 
-    var distribution = {
+    const distribution = {
       1: 0,
       2: 0,
       3: 0,
@@ -441,9 +586,11 @@ const getRatings = async (req, res) => {
       5: 0,
     };
 
-    var sum = 0;
-    for (var i = 0; i < reviews.length; i++) {
-      var review = reviews[i];
+    let sum = 0;
+    const recentFeedback = [];
+
+    for (let i = 0; i < reviews.length; i++) {
+      const review = reviews[i];
       sum += review.rating;
 
       if (review.rating === 1) distribution[1]++;
@@ -451,9 +598,20 @@ const getRatings = async (req, res) => {
       else if (review.rating === 3) distribution[3]++;
       else if (review.rating === 4) distribution[4]++;
       else if (review.rating === 5) distribution[5]++;
+
+      // Get recent feedback (last 5)
+      if (i < 5) {
+        recentFeedback.push({
+          _id: review._id,
+          rating: review.rating,
+          comment: review.comment || "No comment provided",
+          reviewer: review.reviewer?.fullName || "Anonymous",
+          createdAt: review.createdAt,
+        });
+      }
     }
 
-    var average = total > 0 ? sum / total : 0;
+    const average = total > 0 ? sum / total : 0;
 
     res.json({
       success: true,
@@ -461,6 +619,7 @@ const getRatings = async (req, res) => {
         average: Math.round(average * 10) / 10,
         total: total,
         distribution: distribution,
+        recentFeedback: recentFeedback,
       },
     });
   } catch (error) {
@@ -475,6 +634,7 @@ module.exports = {
   getProductivityData,
   getCategoryStats,
   getMonthlyStats,
+  getYearlyStats, // Add the new function
   getAchievements,
   getRatings,
 };

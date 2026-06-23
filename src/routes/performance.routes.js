@@ -6,6 +6,7 @@ const {
   getProductivityData,
   getCategoryStats,
   getMonthlyStats,
+  getYearlyStats, // Import the new function
   getAchievements,
   getRatings,
 } = require("../controllers/performance.controller");
@@ -21,6 +22,7 @@ router.get("/task-stats", getTaskStats);
 router.get("/productivity", getProductivityData);
 router.get("/category-stats", getCategoryStats);
 router.get("/monthly-stats", getMonthlyStats);
+router.get("/yearly-stats", getYearlyStats); // Add the new route
 router.get("/achievements", getAchievements);
 router.get("/ratings", getRatings);
 
