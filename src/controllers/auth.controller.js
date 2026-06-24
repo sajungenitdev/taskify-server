@@ -532,22 +532,66 @@ const completeOnboarding = async (req, res) => {
 };
 
 // ============ UPDATE MY PROFILE ============
+// ============ UPDATE MY PROFILE ============
 const updateMyProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { fullName, phoneNumber, employeeId, departmentId } = req.body;
+    const {
+      fullName,
+      phoneNumber,
+      employeeId,
+      departmentId,
+      bio,
+      position,
+      location,
+      website,
+      socialLinks,
+      address,
+      emergencyContact,
+      skills,
+      languages,
+      achievements,
+      notificationPreferences,
+      dailyHoursTarget,
+    } = req.body;
 
     const updates = {};
-    if (fullName) updates.fullName = fullName;
-    if (phoneNumber) updates.phoneNumber = phoneNumber;
-    if (employeeId) updates.employeeId = employeeId;
-    if (departmentId) updates.departmentId = departmentId;
+
+    // Only add fields that are provided
+    if (fullName !== undefined) updates.fullName = fullName;
+    if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
+    if (employeeId !== undefined) updates.employeeId = employeeId;
+    if (departmentId !== undefined) updates.departmentId = departmentId;
+    if (bio !== undefined) updates.bio = bio;
+    if (position !== undefined) updates.position = position;
+    if (location !== undefined) updates.location = location;
+    if (website !== undefined) updates.website = website;
+    if (socialLinks !== undefined) updates.socialLinks = socialLinks;
+    if (address !== undefined) updates.address = address;
+    if (emergencyContact !== undefined)
+      updates.emergencyContact = emergencyContact;
+    if (skills !== undefined) updates.skills = skills;
+    if (languages !== undefined) updates.languages = languages;
+    if (achievements !== undefined) updates.achievements = achievements;
+    if (notificationPreferences !== undefined)
+      updates.notificationPreferences = notificationPreferences;
+    if (dailyHoursTarget !== undefined)
+      updates.dailyHoursTarget = dailyHoursTarget;
 
     const user = await User.findByIdAndUpdate(
       userId,
       { $set: updates },
       { new: true, runValidators: true },
-    ).select("-password");
+    )
+      .select("-password")
+      .populate("departmentId", "name code");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
 
     res.json({
       success: true,
@@ -558,7 +602,7 @@ const updateMyProfile = async (req, res) => {
     console.error("Update profile error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };

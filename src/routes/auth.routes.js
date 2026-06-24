@@ -1,63 +1,61 @@
 const express = require("express");
-const { body } = require("express-validator");
+const { authenticate, requireRole } = require("../middleware/auth.middleware");
+const { uploadProfile } = require("../config/multer");
 const {
-  register,
-  login,
-  refreshToken,
-  logout,
-  forgotPassword,
-  resetPassword,
-  changePassword,
-  completeOnboarding,
-  getAllUsers,
   getMe,
+  updateMyProfile,
+  uploadProfilePhoto,
+  changePassword,
+  getAllUsers,
+  getUserProfile,
   updateUser,
   deleteUser,
   changeUserRole,
-  getActiveUsers,
+  exportUsers,
+  bulkImportUsers,
 } = require("../controllers/auth.controller");
-const { authenticate, requireRole } = require("../middleware/auth.middleware");
-const { validateRequest } = require("../middleware/validation.middleware");
-const {
-  rateLimiter,
-  strictRateLimiter,
-} = require("../middleware/rateLimiter.middleware");
 
 const router = express.Router();
 
-// Validation rules
-const loginValidation = [
-  body("email").isEmail().normalizeEmail(),
-  body("password").notEmpty(),
-];
-
-// ============ PUBLIC ROUTES ============
-router.post("/login", rateLimiter, loginValidation, validateRequest, login);
-router.get("/active-users", getActiveUsers);
-router.post("/refresh-token", refreshToken);
-router.post("/forgot-password", strictRateLimiter, forgotPassword);
-router.post("/reset-password", strictRateLimiter, resetPassword);
-
-// ============ PROTECTED ROUTES (require authentication) ============
+// All routes require authentication
 router.use(authenticate);
 
+// ============ SELF PROFILE ROUTES ============
+router.get("/me", getMe);
+router.put("/profile", updateMyProfile);  // ✅ This is the route you need
+router.post("/profile/photo", uploadProfile, uploadProfilePhoto);
+router.post("/change-password", changePassword);
+
+// ============ EXPORT AND IMPORT ROUTES ============
+router.get(
+  "/export",
+  requireRole("admin", "super_admin", "hr_manager"),
+  exportUsers,
+);
+router.post(
+  "/bulk-import",
+  requireRole("admin", "super_admin", "hr_manager", "employee"),
+  bulkImportUsers,
+);
+
+// ============ ADMIN ROUTES ============
+// Get all users
 router.get(
   "/users",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "employee"),
   getAllUsers,
 );
-router.get("/me", getMe);
-router.post("/logout", logout);
-router.post("/change-password", changePassword);
-router.post("/complete-onboarding", completeOnboarding);
-router.post(
-  "/register",
-  strictRateLimiter,
-  requireRole("admin", "super_admin"),
-  register,
-);
+
+// Get user by ID
+router.get("/users/:id", requireRole("admin", "super_admin"), getUserProfile);
+
+// Update user
 router.put("/users/:id", requireRole("admin", "super_admin"), updateUser);
+
+// Delete user (Super Admin only)
 router.delete("/users/:id", requireRole("super_admin"), deleteUser);
+
+// Change user role (Super Admin only)
 router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
 
 module.exports = router;

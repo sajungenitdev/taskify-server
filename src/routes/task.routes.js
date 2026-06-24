@@ -62,7 +62,7 @@ router.get("/project/:projectId/summary", getProjectTasksSummary);
 // ============= BULK OPERATIONS =============
 router.post(
   "/project/:projectId/bulk",
-  requireRole("admin", "dept_manager", "project_manager", "line_manager"),
+  // requireRole("admin", "dept_manager", "project_manager", "line_manager", "employee"),
   [
     body("tasks").isArray().withMessage("Tasks must be an array"),
     body("tasks.*.title").notEmpty().withMessage("Each task must have a title"),
@@ -81,14 +81,14 @@ router.post(
 
 router.post(
   "/project/:projectId/import",
-  requireRole("admin", "dept_manager", "project_manager"),
+  authenticate,
   [body("tasks").isArray().withMessage("Tasks must be an array")],
   importTasksFromFile,
 );
 
 router.put(
   "/project/:projectId/reorder",
-  requireRole("admin", "dept_manager", "project_manager"),
+  authenticate,
   [
     body("taskOrders").isArray().withMessage("taskOrders must be an array"),
     body("taskOrders.*.taskId")

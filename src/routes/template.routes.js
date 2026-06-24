@@ -16,7 +16,7 @@ const router = express.Router();
 router.use(authenticate);
 
 // Template routes
-router.get("/", requireRole("admin", "super_admin"), getTemplates);
+router.get("/", requireRole("admin", "super_admin", "employee"), getTemplates);
 router.post("/seed", requireRole("super_admin"), seedTemplates);
 router.get("/:id", requireRole("admin", "super_admin"), getTemplateById);
 router.post("/", requireRole("admin", "super_admin"), createTemplate);
