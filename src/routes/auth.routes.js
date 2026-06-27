@@ -2,6 +2,7 @@ const express = require("express");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const { uploadProfile } = require("../config/multer");
 const {
+  login, // ✅ ADD THIS - login function
   getMe,
   updateMyProfile,
   uploadProfilePhoto,
@@ -13,13 +14,15 @@ const {
   changeUserRole,
   exportUsers,
   bulkImportUsers,
-  getActiveUsers, // ✅ Added this import
+  getActiveUsers,
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
 // ============ PUBLIC ROUTES (no authentication required) ============
-router.get("/active-users", getActiveUsers); // ✅ Added this route
+// ✅ These routes must come BEFORE router.use(authenticate)
+router.post("/login", login); // ← THIS WAS MISSING!
+router.get("/active-users", getActiveUsers);
 
 // ============ ALL ROUTES BELOW REQUIRE AUTHENTICATION ============
 router.use(authenticate);
