@@ -13,16 +13,20 @@ const {
   changeUserRole,
   exportUsers,
   bulkImportUsers,
+  getActiveUsers, // ✅ Added this import
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
-// All routes require authentication
+// ============ PUBLIC ROUTES (no authentication required) ============
+router.get("/active-users", getActiveUsers); // ✅ Added this route
+
+// ============ ALL ROUTES BELOW REQUIRE AUTHENTICATION ============
 router.use(authenticate);
 
 // ============ SELF PROFILE ROUTES ============
 router.get("/me", getMe);
-router.put("/profile", updateMyProfile);  // ✅ This is the route you need
+router.put("/profile", updateMyProfile);
 router.post("/profile/photo", uploadProfile, uploadProfilePhoto);
 router.post("/change-password", changePassword);
 
