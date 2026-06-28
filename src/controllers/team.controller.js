@@ -1,5 +1,5 @@
+const { User } = require("../models/User.model");
 const Team = require("../models/team.model");
-const User = require("../models/User.model");
 const mongoose = require("mongoose");
 
 // ============ HELPER FUNCTIONS ============
