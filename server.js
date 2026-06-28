@@ -36,12 +36,14 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
+// In server.js
 app.use(
   cors({
     origin: function (origin, callback) {
       const allowedOrigins = [
         "http://localhost:3000",
         "http://localhost:5000",
+        "http://localhost:3001",
         "https://taskify-frontend-alpha.vercel.app",
         "https://taskify-server-5gat.onrender.com",
         undefined,
@@ -55,9 +57,23 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+      "Origin",
+      "X-Request-ID", // ✅ ADD THIS - allow custom header
+      "Access-Control-Request-Method",
+      "Access-Control-Request-Headers",
+    ],
+    exposedHeaders: ["Content-Range", "X-Content-Range"],
+    maxAge: 600,
   }),
 );
+
+// Handle preflight requests
+app.options("*", cors());
 app.options("*", cors());
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
@@ -138,7 +154,8 @@ const performanceRoutes = require("./src/routes/performance.routes");
 const aiRoutes = require("./src/routes/ai.routes");
 const reportRoutes = require("./src/routes/report.routes");
 const leaveRoutes = require("./src/routes/leave.routes");
-// const teamRoutes = require('./src/routes/team.routes');
+const teamRoutes = require('./src/routes/team.routes');
+
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -154,7 +171,7 @@ app.use("/api/v1/performance", performanceRoutes);
 app.use("/api/v1/ai", aiRoutes);
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/leaves", leaveRoutes);
-// app.use('/api/v1/teams', teamRoutes);
+app.use('/api/v1/teams', teamRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {

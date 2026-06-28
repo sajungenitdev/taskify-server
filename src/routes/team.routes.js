@@ -18,73 +18,73 @@ const {
 // All routes require authentication
 router.use(authenticate);
 
-// Team statistics (must come before /:id routes)
+// ============ TEAM STATISTICS ============
 router.get(
   "/stats",
   requireRole("admin", "super_admin", "hr_manager"),
   getTeamStats,
 );
 
-// Get user's teams
+// ============ GET USER TEAMS ============
 router.get(
   "/user/:userId",
   requireRole("admin", "super_admin", "hr_manager", "employee"),
   getUserTeams,
 );
 
-// Get teams by department
+// ============ GET TEAMS BY DEPARTMENT ============
 router.get(
   "/department/:department",
   requireRole("admin", "super_admin", "hr_manager"),
   getTeamsByDepartment,
 );
 
-// Get all teams
+// ============ GET ALL TEAMS ============
 router.get(
   "/",
   requireRole("admin", "super_admin", "hr_manager", "employee"),
   getAllTeams,
 );
 
-// Create team
+// ============ CREATE TEAM ============
 router.post("/", requireRole("admin", "super_admin", "hr_manager"), createTeam);
 
-// Get team members
+// ============ GET TEAM MEMBERS ============
 router.get(
   "/:id/members",
   requireRole("admin", "super_admin", "hr_manager", "employee"),
   getTeamMembers,
 );
 
-// Add members to team
+// ============ ADD MEMBERS TO TEAM ============
 router.post(
   "/:id/members",
   requireRole("admin", "super_admin", "hr_manager"),
   addMembers,
 );
 
-// Remove member from team
+// ============ REMOVE MEMBER FROM TEAM ============
 router.delete(
   "/:id/members/:memberId",
   requireRole("admin", "super_admin", "hr_manager"),
   removeMember,
 );
 
-// Get single team
+// ============ GET SINGLE TEAM ============
 router.get(
   "/:id",
   requireRole("admin", "super_admin", "hr_manager", "employee"),
   getTeamById,
 );
 
-// Update team
+// ============ UPDATE TEAM ============
 router.put(
   "/:id",
   requireRole("admin", "super_admin", "hr_manager"),
   updateTeam,
 );
 
-// Delete team
+// ============ DELETE TEAM ============
 router.delete("/:id", requireRole("super_admin"), deleteTeam);
 
 module.exports = router;
