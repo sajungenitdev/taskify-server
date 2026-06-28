@@ -8,7 +8,7 @@ const taskSchema = new mongoose.Schema(
     projectId: {  // ADD THIS - proper reference to Project model
       type: mongoose.Schema.Types.ObjectId,
       ref: "Project",
-      required: true,
+      required: false,
     },
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,
