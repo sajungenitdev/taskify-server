@@ -40,7 +40,7 @@ app.use(
   cors({
     origin: function (origin, callback) {
       const allowedOrigins = [
-        "http://localhost:3000",
+        "http://localhost:3000/",
         "http://localhost:5000",
         "https://taskify-frontend-alpha.vercel.app",
         "https://taskify-server-5gat.onrender.com",

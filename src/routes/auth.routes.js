@@ -54,6 +54,11 @@ router.get(
   requireRole("admin", "super_admin", "hr_manager", "employee"),
   getAllUsers,
 );
+router.get(
+  "/users/active",
+  requireRole("admin", "super_admin", "hr_manager", "employee"),
+  getActiveUsers,
+);
 
 // Get user by ID
 router.get("/users/:id", requireRole("admin", "super_admin"), getUserProfile);
