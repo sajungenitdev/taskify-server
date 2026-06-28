@@ -1,5 +1,5 @@
 const { User } = require("../models/User.model");
-const Team = require("../models/Team.model");
+const Team = require("../models/Teams.model");
 const mongoose = require("mongoose");
 
 //Testing
