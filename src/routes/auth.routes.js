@@ -2,7 +2,7 @@ const express = require("express");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const { uploadProfile } = require("../config/multer");
 const {
-  login, // ✅ ADD THIS - login function
+  login,
   getMe,
   updateMyProfile,
   uploadProfilePhoto,
@@ -16,14 +16,18 @@ const {
   bulkImportUsers,
   getActiveUsers,
   register,
+  // ✅ ADD TEAM CONTROLLER FUNCTIONS
+  getMyTeam,
+  getTeamMembers,
+  getTeamStats,
+  updateTeamMember,
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
 // ============ PUBLIC ROUTES (no authentication required) ============
-// ✅ These routes must come BEFORE router.use(authenticate)
 router.post("/register", register);
-router.post("/login", login); // ← THIS WAS MISSING!
+router.post("/login", login);
 router.get("/active-users", getActiveUsers);
 
 // ============ ALL ROUTES BELOW REQUIRE AUTHENTICATION ============
@@ -71,5 +75,53 @@ router.delete("/users/:id", requireRole("super_admin"), deleteUser);
 
 // Change user role (Super Admin only)
 router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
+
+// ============ TEAM ROUTES ============
+// Get my team (users reporting to me)
+router.get(
+  "/my-team",
+  requireRole(
+    "admin",
+    "super_admin",
+    "hr_manager",
+    "dept_manager",
+    "project_manager",
+    "line_manager",
+  ),
+  getMyTeam,
+);
+
+// Get team members by manager ID
+router.get(
+  "/team/:managerId",
+  requireRole(
+    "admin",
+    "super_admin",
+    "hr_manager",
+    "dept_manager",
+    "project_manager",
+  ),
+  getTeamMembers,
+);
+
+// Get team statistics
+router.get(
+  "/team/:managerId/stats",
+  requireRole(
+    "admin",
+    "super_admin",
+    "hr_manager",
+    "dept_manager",
+    "project_manager",
+  ),
+  getTeamStats,
+);
+
+// Update team member
+router.put(
+  "/team/member/:memberId",
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager"),
+  updateTeamMember,
+);
 
 module.exports = router;

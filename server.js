@@ -40,7 +40,7 @@ app.use(
   cors({
     origin: function (origin, callback) {
       const allowedOrigins = [
-        "http://localhost:3000/",
+        "http://localhost:3000",
         "http://localhost:5000",
         "https://taskify-frontend-alpha.vercel.app",
         "https://taskify-server-5gat.onrender.com",
@@ -138,6 +138,7 @@ const performanceRoutes = require("./src/routes/performance.routes");
 const aiRoutes = require("./src/routes/ai.routes");
 const reportRoutes = require("./src/routes/report.routes");
 const leaveRoutes = require("./src/routes/leave.routes");
+// const teamRoutes = require('./src/routes/team.routes');
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -153,6 +154,7 @@ app.use("/api/v1/performance", performanceRoutes);
 app.use("/api/v1/ai", aiRoutes);
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/leaves", leaveRoutes);
+// app.use('/api/v1/teams', teamRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
