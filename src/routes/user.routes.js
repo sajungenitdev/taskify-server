@@ -6,6 +6,7 @@ const {
   updateUser,
   deleteUser,
   changeUserRole,
+  register,
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
@@ -14,6 +15,7 @@ const router = express.Router();
 router.use(authenticate);
 
 // ============ USER MANAGEMENT ROUTES ============
+router.post("/register", register); // ← ADD THIS
 // Get all users
 router.get(
   "/",
