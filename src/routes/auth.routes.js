@@ -15,12 +15,14 @@ const {
   exportUsers,
   bulkImportUsers,
   getActiveUsers,
+  register,
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
 // ============ PUBLIC ROUTES (no authentication required) ============
 // ✅ These routes must come BEFORE router.use(authenticate)
+router.post("/register", register);
 router.post("/login", login); // ← THIS WAS MISSING!
 router.get("/active-users", getActiveUsers);
 
