@@ -27,6 +27,8 @@ const router = express.Router();
 router.post("/register", register);
 router.post("/login", login); // ← THIS WAS MISSING!
 router.get("/active-users", getActiveUsers);
+router.post("/forgot-password", forgotPassword); // ADD THIS
+router.post("/reset-password/:token", resetPassword); // ADD THIS
 
 // ============ ALL ROUTES BELOW REQUIRE AUTHENTICATION ============
 router.use(authenticate);
@@ -36,8 +38,7 @@ router.get("/me", getMe);
 router.put("/profile", updateMyProfile);
 router.post("/profile/photo", uploadProfile, uploadProfilePhoto);
 router.post("/change-password", changePassword);
-router.post("/forgot-password", forgotPassword); // ADD THIS
-router.post("/reset-password/:token", resetPassword); // ADD THIS
+
 
 // ============ EXPORT AND IMPORT ROUTES ============
 router.get(
