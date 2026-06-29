@@ -23,6 +23,8 @@ const userSchema = new mongoose.Schema(
       enum: Object.values(userRoles),
       default: userRoles.EMPLOYEE,
     },
+    resetPasswordToken: { type: String },
+    resetPasswordExpires: { type: Date },
     departmentId: { type: mongoose.Schema.Types.ObjectId, ref: "Department" },
     managerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     dailyHoursTarget: { type: Number, enum: [6, 7, 8], default: 8 },
