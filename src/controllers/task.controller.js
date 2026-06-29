@@ -298,11 +298,11 @@ const updateTask = async (req, res) => {
   }
 };
 
-// Update task status
+// Update task status - WITH REJECTION REASON, APPROVAL NOTE, AND EVIDENCE CHECK
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, rejectionReason } = req.body;
+    const { status, rejectionReason, approvalNote } = req.body;
 
     const validStatuses = [
       "pending",
@@ -334,10 +334,37 @@ const updateTaskStatus = async (req, res) => {
     }
     const oldStatus = oldTask.status;
 
+    // CHECK: If task requires evidence and user is trying to submit
+    if (status === "submitted" && oldTask.evidenceRequired) {
+      // Check if evidence URLs exist
+      const hasEvidence = oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
+      
+      if (!hasEvidence) {
+        return res.status(400).json({
+          success: false,
+          message: "Evidence is required to submit this task. Please upload evidence first.",
+          requiresEvidence: true,
+        });
+      }
+    }
+
+    // Build update object
+    const updateData = { status };
+    
+    // Store rejection reason if provided
+    if (status === "rejected" && rejectionReason) {
+      updateData.rejectionReason = rejectionReason;
+    }
+    
+    // Store approval note if provided
+    if (status === "completed" && approvalNote) {
+      updateData.approvalNote = approvalNote;
+    }
+
     // Update task
     const task = await Task.findByIdAndUpdate(
       id,
-      { $set: { status: status } },
+      { $set: updateData },
       { new: true, runValidators: false },
     )
       .populate("assignedTo", "fullName email")
@@ -362,8 +389,6 @@ const updateTaskStatus = async (req, res) => {
     // Special notifications based on status
     if (status === "submitted") {
       await NotificationService.sendTaskSubmitted(id, req.user._id);
-
-      // Also notify all managers, admins, supervisors, and HR
       await notifyAllManagersAndAdmins(task, req.user);
     } else if (status === "completed") {
       await NotificationService.sendTaskApproved(id, req.user._id);

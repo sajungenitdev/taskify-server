@@ -4,8 +4,8 @@ const taskSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     description: { type: String, required: true },
-    project: { type: String, trim: true }, // Keep for backward compatibility
-    projectId: {  // ADD THIS - proper reference to Project model
+    project: { type: String, trim: true },
+    projectId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Project",
       required: false,
@@ -49,7 +49,12 @@ const taskSchema = new mongoose.Schema(
     isApprovalRequired: { type: Boolean, default: false },
     evidenceRequired: { type: Boolean, default: false },
     evidenceUrls: [{ type: String }],
-    order: { type: Number, default: 0 }, // For task ordering within project
+    order: { type: Number, default: 0 },
+
+    // ADD THESE TWO FIELDS
+    rejectionReason: { type: String, default: "" },
+    approvalNote: { type: String, default: "" },
+
     extensionRequests: [
       {
         requestedDate: { type: Date, default: Date.now },
@@ -78,7 +83,7 @@ taskSchema.index({ assignedTo: 1 });
 taskSchema.index({ departmentId: 1 });
 taskSchema.index({ status: 1 });
 taskSchema.index({ deadline: 1 });
-taskSchema.index({ projectId: 1 }); // ADD THIS
-taskSchema.index({ projectId: 1, order: 1 }); // Compound index
+taskSchema.index({ projectId: 1 });
+taskSchema.index({ projectId: 1, order: 1 });
 
 module.exports = { Task: mongoose.model("Task", taskSchema) };

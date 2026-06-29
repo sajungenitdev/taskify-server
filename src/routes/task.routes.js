@@ -133,6 +133,15 @@ router.patch(
         "rejected",
       ])
       .withMessage("Invalid status value"),
+    // Add optional validation for rejectionReason
+    body("rejectionReason")
+      .optional()
+      .isString()
+      .withMessage("Rejection reason must be a string"),
+    body("approvalNote")
+      .optional()
+      .isString()
+      .withMessage("Approval note must be a string"),
   ],
   updateTaskStatus,
 );
