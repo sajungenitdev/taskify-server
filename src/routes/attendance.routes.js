@@ -31,11 +31,7 @@ router.get("/timer-status", getTimerStatus);
 // ============================================================================
 // ADMIN ROUTES
 // ============================================================================
-router.get(
-  "/all",
-  requireRole("admin", "super_admin", "hr_manager"),
-  getAllAttendance,
-);
+router.get("/all", getAllAttendance);
 router.get(
   "/stats",
   requireRole("admin", "super_admin", "hr_manager"),
