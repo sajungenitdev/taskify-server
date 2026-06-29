@@ -1,6 +1,9 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../models/User.model");
+const crypto = require("crypto");
+const { sendEmail } = require("../config/email.config");
+const EmailTemplates = require("../services/emailTemplates.service");
 
 // ============ HELPER FUNCTIONS ============
 const generateToken = (user) => {
@@ -660,19 +663,49 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate reset token (implement with email service)
-    const resetToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
-    });
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetExpires = Date.now() + 3600000; // 1 hour
 
-    // TODO: Send email with reset link
-    // For now, just return the token (in production, send via email)
+    // Save token to user
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = resetExpires;
+    await user.save();
+
+    // Create reset URL
+    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password/${resetToken}`;
+
+    // Create email template
+    const emailContent = `
+      <div class="header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 30px; text-align: center; border-radius: 20px 20px 0 0;">
+        <h1 style="font-size: 28px; margin-bottom: 10px;">🔐 Password Reset</h1>
+        <p>Reset your TaskManager account password</p>
+      </div>
+      <div class="content" style="padding: 40px 30px; background: #ffffff;">
+        <p>Hello <strong>${user.fullName}</strong>,</p>
+        <p>We received a request to reset your password. Click the button below to set a new password:</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetUrl}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 8px; font-weight: 600;">Reset Password</a>
+        </div>
+        <p>Or copy and paste this link in your browser:</p>
+        <p style="word-break: break-all; font-size: 12px; color: #64748b; background: #f1f5f9; padding: 10px; border-radius: 5px;">${resetUrl}</p>
+        <p style="margin-top: 20px;">This link will expire in <strong>1 hour</strong>.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+        <p style="font-size: 14px; color: #64748b;">For security, this link can only be used once.</p>
+      </div>
+    `;
+
+    // Send email
+    await sendEmail(
+      user.email,
+      "🔐 Password Reset Request",
+      EmailTemplates.getBaseTemplate(emailContent, "Password Reset"),
+    );
 
     res.json({
       success: true,
       message: "Password reset link sent to your email",
-      // Remove this in production, only for testing
-      ...(process.env.NODE_ENV === "development" && { resetToken }),
     });
   } catch (error) {
     console.error("Forgot password error:", error);
@@ -684,49 +717,84 @@ const forgotPassword = async (req, res) => {
 };
 
 // ============ RESET PASSWORD ============
+// Reset Password - Set new password
 const resetPassword = async (req, res) => {
   try {
-    const { token, newPassword } = req.body;
+    const { token } = req.params;
+    const { password, confirmPassword } = req.body;
 
-    if (!token || !newPassword) {
+    if (!password || !confirmPassword) {
       return res.status(400).json({
         success: false,
-        message: "Token and new password are required",
+        message: "Password and confirm password are required",
       });
     }
 
-    if (newPassword.length < 6) {
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match",
+      });
+    }
+
+    if (password.length < 6) {
       return res.status(400).json({
         success: false,
         message: "Password must be at least 6 characters long",
       });
     }
 
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId);
+    // Find user with valid token
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() },
+    });
 
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-      user.password = hashedPassword;
-      await user.save();
-
-      res.json({
-        success: true,
-        message: "Password reset successfully",
-      });
-    } catch (err) {
-      return res.status(401).json({
+    if (!user) {
+      return res.status(400).json({
         success: false,
-        message: "Invalid or expired token",
+        message: "Invalid or expired reset token. Please request a new one.",
       });
     }
+
+    // Hash password
+    const bcrypt = require("bcryptjs");
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(password, salt);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    // Send confirmation email
+    const confirmContent = `
+      <div class="header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 40px 30px; text-align: center; border-radius: 20px 20px 0 0;">
+        <h1 style="font-size: 28px; margin-bottom: 10px;">✅ Password Reset Successful</h1>
+        <p>Your password has been changed</p>
+      </div>
+      <div class="content" style="padding: 40px 30px; background: #ffffff;">
+        <p>Hello <strong>${user.fullName}</strong>,</p>
+        <div style="background: #d1fae5; padding: 20px; border-radius: 12px; margin: 20px 0; text-align: center;">
+          <p style="font-size: 48px;">🔐</p>
+          <p style="color: #065f46;">Your password has been successfully reset.</p>
+        </div>
+        <p>If you did not perform this action, please contact support immediately.</p>
+        <div style="text-align: center; margin-top: 30px;">
+          <a href="${process.env.FRONTEND_URL || "http://localhost:3000"}/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 8px; font-weight: 600;">Sign In</a>
+        </div>
+      </div>
+    `;
+
+    await sendEmail(
+      user.email,
+      "✅ Password Reset Successful",
+      EmailTemplates.getBaseTemplate(confirmContent, "Password Reset Success"),
+    );
+
+    res.json({
+      success: true,
+      message:
+        "Password reset successfully. You can now login with your new password.",
+    });
   } catch (error) {
     console.error("Reset password error:", error);
     res.status(500).json({
@@ -862,7 +930,6 @@ const bulkImportUsers = async (req, res) => {
     });
   }
 };
-
 
 // ============ EXPORTS ============
 module.exports = {

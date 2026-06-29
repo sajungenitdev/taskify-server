@@ -16,6 +16,8 @@ const {
   bulkImportUsers,
   getActiveUsers,
   register,
+  forgotPassword,
+  resetPassword,
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
@@ -34,6 +36,8 @@ router.get("/me", getMe);
 router.put("/profile", updateMyProfile);
 router.post("/profile/photo", uploadProfile, uploadProfilePhoto);
 router.post("/change-password", changePassword);
+router.post("/forgot-password", forgotPassword); // ADD THIS
+router.post("/reset-password/:token", resetPassword); // ADD THIS
 
 // ============ EXPORT AND IMPORT ROUTES ============
 router.get(
