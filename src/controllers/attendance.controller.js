@@ -513,8 +513,54 @@ const getAttendanceStats = async (req, res) => {
     });
   }
 };
+// controllers/attendance.controller.js
+
+// Add this function after the other functions
+const getEmployeeAttendanceHistory = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { startDate, endDate, limit = 50, page = 1 } = req.query;
+
+    const query = { employeeId: userId };
+
+    if (startDate) {
+      query.date = { ...query.date, $gte: new Date(startDate) };
+    }
+    if (endDate) {
+      query.date = { ...query.date, $lte: new Date(endDate) };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [attendance, total] = await Promise.all([
+      Attendance.find(query)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Attendance.countDocuments(query),
+    ]);
+
+    res.json({
+      success: true,
+      data: attendance,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("Get employee attendance history error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get attendance history",
+    });
+  }
+};
 
 module.exports = {
+  getEmployeeAttendanceHistory,
   getTodayAttendance,
   startTimer,
   pauseTimer,

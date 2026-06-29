@@ -11,6 +11,7 @@ const {
   getTimerStatus,
   getAllAttendance,
   getAttendanceStats,
+  getEmployeeAttendanceHistory, // ← ADD THIS
 } = require("../controllers/attendance.controller");
 
 const router = express.Router();
@@ -19,7 +20,7 @@ const router = express.Router();
 router.use(authenticate);
 
 // ============================================================================
-// EMPLOYEE ROUTES (Available to all authenticated users)
+// EMPLOYEE ROUTES
 // ============================================================================
 router.get("/today", getTodayAttendance);
 router.post("/start", startTimer);
@@ -27,11 +28,11 @@ router.post("/pause", pauseTimer);
 router.post("/resume", resumeTimer);
 router.post("/checkout", checkOut);
 router.get("/timer-status", getTimerStatus);
+router.get("/history", getEmployeeAttendanceHistory); // ← ADD THIS
 
 // ============================================================================
-// ADMIN ROUTES (HR only)
+// ADMIN ROUTES
 // ============================================================================
-// ✅ FIX: Add requireRole to /all route
 router.get(
   "/all",
   requireRole("admin", "super_admin", "hr_manager"),
