@@ -19,7 +19,7 @@ const router = express.Router();
 router.use(authenticate);
 
 // ============================================================================
-// EMPLOYEE ROUTES
+// EMPLOYEE ROUTES (Available to all authenticated users)
 // ============================================================================
 router.get("/today", getTodayAttendance);
 router.post("/start", startTimer);
@@ -29,9 +29,14 @@ router.post("/checkout", checkOut);
 router.get("/timer-status", getTimerStatus);
 
 // ============================================================================
-// ADMIN ROUTES
+// ADMIN ROUTES (HR only)
 // ============================================================================
-router.get("/all", getAllAttendance);
+// ✅ FIX: Add requireRole to /all route
+router.get(
+  "/all",
+  requireRole("admin", "super_admin", "hr_manager"),
+  getAllAttendance,
+);
 router.get(
   "/stats",
   requireRole("admin", "super_admin", "hr_manager"),
