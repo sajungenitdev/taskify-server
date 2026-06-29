@@ -2,13 +2,12 @@
 
 const { Attendance, attendanceStatus } = require("../models/Attendance.model");
 const { User } = require("../models/User.model");
-const moment = require("moment");
 
 // ============================================================================
-// EMPLOYEE ATTENDANCE ROUTES
+// EMPLOYEE ROUTES
 // ============================================================================
 
-// Get today's attendance for an employee
+// Get today's attendance
 const getTodayAttendance = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -26,14 +25,10 @@ const getTodayAttendance = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "No attendance record for today",
-        data: null,
       });
     }
 
-    res.json({
-      success: true,
-      data: attendance,
-    });
+    res.json({ success: true, data: attendance });
   } catch (error) {
     console.error("Get today attendance error:", error);
     res.status(500).json({
@@ -54,60 +49,51 @@ const startTimer = async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Check if attendance already exists for today
     let attendance = await Attendance.findOne({
       employeeId: userId,
       date: { $gte: today, $lt: tomorrow },
     });
 
-    if (attendance) {
-      // If attendance exists but no check-in, update it
-      if (!attendance.checkIn) {
-        attendance.checkIn = new Date();
-        attendance.timerStart = new Date();
-        attendance.status = attendanceStatus.PRESENT;
-        attendance.location = location || "Office";
-        if (checkInLocation) {
-          attendance.checkInLocation = checkInLocation;
-        }
-        await attendance.save();
-
-        return res.json({
-          success: true,
-          message: "Timer started successfully",
-          data: attendance,
-        });
-      }
-
+    if (attendance && attendance.checkIn) {
       return res.status(400).json({
         success: false,
-        message: "Timer already started for today",
+        message: "You have already checked in today",
         data: attendance,
       });
     }
 
-    // Create new attendance record
     const user = await User.findById(userId).populate("departmentId");
-    const newAttendance = new Attendance({
-      employeeId: userId,
-      employeeName: user.fullName,
-      employeeEmail: user.email,
-      employeeDepartment: user.departmentId?.name || "Unassigned",
-      employeePosition: user.position || "",
-      date: new Date(),
-      checkIn: new Date(),
-      timerStart: new Date(),
-      status: attendanceStatus.PRESENT,
-      location: location || "Office",
-      checkInLocation: checkInLocation || {},
-    });
 
-    await newAttendance.save();
+    if (!attendance) {
+      attendance = new Attendance({
+        employeeId: userId,
+        employeeName: user.fullName,
+        employeeEmail: user.email,
+        employeeDepartment: user.departmentId?.name || "Unassigned",
+        employeePosition: user.position || "",
+        date: new Date(),
+        checkIn: new Date(),
+        timerStart: new Date(),
+        status: attendanceStatus.PRESENT,
+        location: location || "Office",
+        checkInLocation: checkInLocation || {},
+      });
+    } else {
+      attendance.checkIn = new Date();
+      attendance.timerStart = new Date();
+      attendance.status = attendanceStatus.PRESENT;
+      attendance.location = location || attendance.location;
+      if (checkInLocation) {
+        attendance.checkInLocation = checkInLocation;
+      }
+    }
+
+    await attendance.save();
 
     res.status(201).json({
       success: true,
       message: "Timer started successfully",
-      data: newAttendance,
+      data: attendance,
     });
   } catch (error) {
     console.error("Start timer error:", error);
@@ -199,7 +185,6 @@ const resumeTimer = async (req, res) => {
       });
     }
 
-    // Calculate paused duration
     if (attendance.timerPausedAt) {
       const pausedDuration =
         new Date().getTime() - attendance.timerPausedAt.getTime();
@@ -264,8 +249,7 @@ const checkOut = async (req, res) => {
     // Calculate total working time
     let totalWorkingMs = 0;
     if (attendance.timerStart) {
-      // If timer is paused, calculate total working time
-      if (attendance.timerPaused) {
+      if (attendance.timerPaused && attendance.timerPausedAt) {
         const pausedDuration =
           new Date().getTime() - attendance.timerPausedAt.getTime();
         totalWorkingMs =
@@ -281,7 +265,6 @@ const checkOut = async (req, res) => {
       }
     }
 
-    // Calculate working hours in hours
     const workingHours = Math.max(0, totalWorkingMs / (1000 * 60 * 60));
 
     attendance.checkOut = new Date();
@@ -296,12 +279,8 @@ const checkOut = async (req, res) => {
       attendance.notes = notes;
     }
 
-    // Calculate overtime (beyond 8 hours)
-    const standardHours = 8;
-    if (workingHours > standardHours) {
-      attendance.overtime = parseFloat(
-        (workingHours - standardHours).toFixed(2),
-      );
+    if (workingHours > 8) {
+      attendance.overtime = parseFloat((workingHours - 8).toFixed(2));
     }
 
     await attendance.save();
@@ -342,12 +321,16 @@ const getTimerStatus = async (req, res) => {
           isPaused: false,
           hasCheckedIn: false,
           hasCheckedOut: false,
-          message: "No active timer",
+          checkIn: null,
+          checkOut: null,
+          currentWorkingHours: 0,
+          totalWorkingHours: 0,
+          overtime: 0,
+          status: "",
         },
       });
     }
 
-    // Calculate current working time
     let currentWorkingMs = attendance.totalWorkingTime || 0;
     let isPaused = attendance.timerPaused || false;
     let isActive = !!attendance.checkIn && !attendance.checkOut;
@@ -372,7 +355,7 @@ const getTimerStatus = async (req, res) => {
         checkOut: attendance.checkOut,
         checkInTime: attendance.checkInTime,
         checkOutTime: attendance.checkOutTime,
-        currentWorkingHours: currentWorkingHours,
+        currentWorkingHours,
         totalWorkingHours: attendance.workingHours || 0,
         overtime: attendance.overtime || 0,
         status: attendance.status,
@@ -386,117 +369,6 @@ const getTimerStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Failed to get timer status",
-    });
-  }
-};
-
-// ============================================================================
-// ATTENDANCE HISTORY ROUTES
-// ============================================================================
-
-// Get employee's attendance history
-const getEmployeeAttendance = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { startDate, endDate, status, limit = 100, page = 1 } = req.query;
-
-    const query = { employeeId: userId };
-
-    if (startDate) {
-      query.date = { ...query.date, $gte: new Date(startDate) };
-    }
-    if (endDate) {
-      query.date = { ...query.date, $lte: new Date(endDate) };
-    }
-    if (status) {
-      query.status = status;
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [attendance, total] = await Promise.all([
-      Attendance.find(query)
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Attendance.countDocuments(query),
-    ]);
-
-    res.json({
-      success: true,
-      data: attendance,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error("Get employee attendance error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to get attendance history",
-    });
-  }
-};
-
-// Get attendance stats for an employee
-const getEmployeeAttendanceStats = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const {
-      year = new Date().getFullYear(),
-      month = new Date().getMonth() + 1,
-    } = req.query;
-
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
-
-    const attendance = await Attendance.find({
-      employeeId: userId,
-      date: { $gte: startDate, $lte: endDate },
-    });
-
-    const stats = {
-      total: attendance.length,
-      present: attendance.filter((a) => a.status === attendanceStatus.PRESENT)
-        .length,
-      absent: attendance.filter((a) => a.status === attendanceStatus.ABSENT)
-        .length,
-      late: attendance.filter((a) => a.status === attendanceStatus.LATE).length,
-      halfDay: attendance.filter((a) => a.status === attendanceStatus.HALF_DAY)
-        .length,
-      onLeave: attendance.filter((a) => a.status === attendanceStatus.ON_LEAVE)
-        .length,
-      totalWorkingHours: attendance.reduce(
-        (sum, a) => sum + (a.workingHours || 0),
-        0,
-      ),
-      totalOvertime: attendance.reduce((sum, a) => sum + (a.overtime || 0), 0),
-      attendanceRate:
-        attendance.length > 0
-          ? Math.round(
-              (attendance.filter(
-                (a) =>
-                  a.status === attendanceStatus.PRESENT ||
-                  a.status === attendanceStatus.LATE,
-              ).length /
-                attendance.length) *
-                100,
-            )
-          : 0,
-    };
-
-    res.json({
-      success: true,
-      data: stats,
-    });
-  } catch (error) {
-    console.error("Get attendance stats error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to get attendance stats",
     });
   }
 };
@@ -554,11 +426,7 @@ const getAllAttendance = async (req, res) => {
         .sort({ date: -1, checkIn: -1 })
         .skip(skip)
         .limit(parseInt(limit))
-        .populate(
-          "employeeId",
-          "fullName email employeeId departmentId position",
-        )
-        .populate("createdBy", "fullName email"),
+        .populate("employeeId", "fullName email employeeId"),
       Attendance.countDocuments(query),
     ]);
 
@@ -581,8 +449,8 @@ const getAllAttendance = async (req, res) => {
   }
 };
 
-// Get attendance dashboard stats (Admin only)
-const getAttendanceDashboardStats = async (req, res) => {
+// Get attendance stats for dashboard
+const getAttendanceStats = async (req, res) => {
   try {
     const { date } = req.query;
     const targetDate = date ? new Date(date) : new Date();
@@ -590,11 +458,9 @@ const getAttendanceDashboardStats = async (req, res) => {
     const nextDay = new Date(targetDate);
     nextDay.setDate(nextDay.getDate() + 1);
 
-    // Get all employees
     const employees = await User.find({ isActive: true });
     const totalEmployees = employees.length;
 
-    // Get today's attendance
     const todayAttendance = await Attendance.find({
       date: { $gte: targetDate, $lt: nextDay },
     });
@@ -602,9 +468,7 @@ const getAttendanceDashboardStats = async (req, res) => {
     const present = todayAttendance.filter(
       (a) => a.status === attendanceStatus.PRESENT,
     ).length;
-    const absent = todayAttendance.filter(
-      (a) => a.status === attendanceStatus.ABSENT,
-    ).length;
+    const absent = totalEmployees - todayAttendance.length;
     const late = todayAttendance.filter(
       (a) => a.status === attendanceStatus.LATE,
     ).length;
@@ -615,7 +479,6 @@ const getAttendanceDashboardStats = async (req, res) => {
       (a) => a.status === attendanceStatus.ON_LEAVE,
     ).length;
 
-    // Calculate attendance rate
     const presentCount = present + late;
     const attendanceRate =
       totalEmployees > 0
@@ -643,87 +506,10 @@ const getAttendanceDashboardStats = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Get attendance dashboard stats error:", error);
+    console.error("Get attendance stats error:", error);
     res.status(500).json({
       success: false,
       message: error.message || "Failed to get attendance stats",
-    });
-  }
-};
-
-// Update attendance status (Admin only)
-const updateAttendanceStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, notes } = req.body;
-
-    if (!Object.values(attendanceStatus).includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-      });
-    }
-
-    const attendance = await Attendance.findById(id);
-    if (!attendance) {
-      return res.status(404).json({
-        success: false,
-        message: "Attendance record not found",
-      });
-    }
-
-    attendance.status = status;
-    if (notes) {
-      attendance.notes = notes;
-    }
-    attendance.updatedBy = req.user._id;
-
-    await attendance.save();
-
-    res.json({
-      success: true,
-      message: "Attendance status updated successfully",
-      data: attendance,
-    });
-  } catch (error) {
-    console.error("Update attendance status error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to update attendance status",
-    });
-  }
-};
-
-// Export attendance data (Admin only)
-const exportAttendance = async (req, res) => {
-  try {
-    const { startDate, endDate, department } = req.query;
-
-    const query = {};
-    if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
-    if (department) {
-      query.employeeDepartment = department;
-    }
-
-    const attendance = await Attendance.find(query)
-      .sort({ date: -1 })
-      .populate("employeeId", "fullName email employeeId");
-
-    res.json({
-      success: true,
-      data: attendance,
-      count: attendance.length,
-    });
-  } catch (error) {
-    console.error("Export attendance error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Failed to export attendance",
     });
   }
 };
@@ -735,10 +521,6 @@ module.exports = {
   resumeTimer,
   checkOut,
   getTimerStatus,
-  getEmployeeAttendance,
-  getEmployeeAttendanceStats,
   getAllAttendance,
-  getAttendanceDashboardStats,
-  updateAttendanceStatus,
-  exportAttendance,
+  getAttendanceStats,
 };

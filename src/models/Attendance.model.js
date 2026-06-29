@@ -45,7 +45,6 @@ const attendanceSchema = new mongoose.Schema(
     },
     workingHours: { type: Number, default: 0 },
     overtime: { type: Number, default: 0 },
-    breakTime: { type: Number, default: 0 },
 
     // Location & Notes
     location: { type: String, default: "" },
@@ -61,18 +60,11 @@ const attendanceSchema = new mongoose.Schema(
       address: { type: String },
     },
 
-    // Additional Fields
-    isHalfDay: { type: Boolean, default: false },
-    halfDayType: { type: String, enum: ["first_half", "second_half", null], default: null },
-    isPreviousDayOff: { type: Boolean, default: false },
-    isNextDayOff: { type: Boolean, default: false },
-    isGovernmentHoliday: { type: Boolean, default: false },
-
     // Metadata
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Indexes
@@ -80,21 +72,21 @@ attendanceSchema.index({ employeeId: 1, date: 1 });
 attendanceSchema.index({ date: 1 });
 attendanceSchema.index({ status: 1 });
 
-// Pre-save middleware to calculate working hours
+// Pre-save middleware
 attendanceSchema.pre("save", function (next) {
   if (this.checkIn && this.checkOut) {
     const diffInMs = this.checkOut.getTime() - this.checkIn.getTime();
     this.workingHours = parseFloat((diffInMs / (1000 * 60 * 60)).toFixed(2));
-    
-    // Calculate overtime (hours beyond 8 hours)
+
     const standardHours = 8;
     if (this.workingHours > standardHours) {
-      this.overtime = parseFloat((this.workingHours - standardHours).toFixed(2));
+      this.overtime = parseFloat(
+        (this.workingHours - standardHours).toFixed(2),
+      );
     } else {
       this.overtime = 0;
     }
 
-    // Format times
     this.checkInTime = this.checkIn.toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
