@@ -302,7 +302,7 @@ const updateTask = async (req, res) => {
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, rejectionReason, approvalNote } = req.body;
+    const { status, rejectionReason, approvalNote, evidenceUrls } = req.body;
 
     const validStatuses = [
       "pending",
@@ -337,12 +337,20 @@ const updateTaskStatus = async (req, res) => {
     // CHECK: If task requires evidence and user is trying to submit
     if (status === "submitted" && oldTask.evidenceRequired) {
       // Check if evidence URLs exist
-      const hasEvidence = oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
-      
-      if (!hasEvidence) {
+      const hasEvidenceUrls = evidenceUrls && evidenceUrls.length > 0;
+      const hasExistingEvidence =
+        oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
+
+      // Also check attachments (if you want to consider attachments as evidence)
+      const Attachment = require("../models/Attachment.model");
+      const attachments = await Attachment.find({ taskId: id });
+      const hasAttachments = attachments && attachments.length > 0;
+
+      if (!hasEvidenceUrls && !hasExistingEvidence && !hasAttachments) {
         return res.status(400).json({
           success: false,
-          message: "Evidence is required to submit this task. Please upload evidence first.",
+          message:
+            "Evidence is required to submit this task. Please upload evidence first.",
           requiresEvidence: true,
         });
       }
@@ -350,15 +358,31 @@ const updateTaskStatus = async (req, res) => {
 
     // Build update object
     const updateData = { status };
-    
+
     // Store rejection reason if provided
     if (status === "rejected" && rejectionReason) {
       updateData.rejectionReason = rejectionReason;
     }
-    
+
     // Store approval note if provided
     if (status === "completed" && approvalNote) {
       updateData.approvalNote = approvalNote;
+    }
+
+    // Store evidence URLs if provided
+    if (evidenceUrls && evidenceUrls.length > 0) {
+      // Merge with existing evidence URLs
+      const existingUrls = oldTask.evidenceUrls || [];
+      const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
+      updateData.evidenceUrls = allUrls;
+      updateData.evidenceSubmitted = true;
+      updateData.evidenceSubmittedAt = new Date();
+    }
+
+    // If submitting, mark evidence as submitted
+    if (status === "submitted") {
+      updateData.evidenceSubmitted = true;
+      updateData.evidenceSubmittedAt = new Date();
     }
 
     // Update task
@@ -412,7 +436,68 @@ const updateTaskStatus = async (req, res) => {
       .json({ success: false, message: "Server error: " + error.message });
   }
 };
+// Evidance Submit
+const submitEvidence = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { evidenceUrls } = req.body;
 
+    if (
+      !evidenceUrls ||
+      !Array.isArray(evidenceUrls) ||
+      evidenceUrls.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one evidence URL is required",
+      });
+    }
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check if user is assigned to this task
+    if (task.assignedTo.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not assigned to this task",
+      });
+    }
+
+    // Merge evidence URLs
+    const existingUrls = task.evidenceUrls || [];
+    const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
+
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          evidenceUrls: allUrls,
+          evidenceSubmitted: true,
+          evidenceSubmittedAt: new Date(),
+        },
+      },
+      { new: true },
+    ).populate("assignedTo", "fullName email");
+
+    res.json({
+      success: true,
+      message: "Evidence submitted successfully",
+      data: updatedTask,
+    });
+  } catch (error) {
+    console.error("Submit evidence error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
 // the helper function:
 const notifyAllManagersAndAdmins = async (task, submitter) => {
   try {
@@ -1166,4 +1251,5 @@ module.exports = {
   reorderTasks,
   getProjectTasksSummary,
   getTaskStatistics,
+  submitEvidence,
 };

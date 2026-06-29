@@ -16,6 +16,7 @@ const {
   reorderTasks,
   getProjectTasksSummary,
   getTaskStatistics,
+  submitEvidence, // ADD THIS IMPORT
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 // Add these imports at the top of your routes file
@@ -62,7 +63,6 @@ router.get("/project/:projectId/summary", getProjectTasksSummary);
 // ============= BULK OPERATIONS =============
 router.post(
   "/project/:projectId/bulk",
-  // requireRole("admin", "dept_manager", "project_manager", "line_manager", "employee"),
   [
     body("tasks").isArray().withMessage("Tasks must be an array"),
     body("tasks.*.title").notEmpty().withMessage("Each task must have a title"),
@@ -105,7 +105,7 @@ router.put(
 // Allow any authenticated user to create a task (no role restriction)
 router.post(
   "/",
-  authenticate, // Only authentication required, no role check
+  authenticate,
   [
     body("title").notEmpty().withMessage("Title is required"),
     body("description").notEmpty().withMessage("Description is required"),
@@ -119,7 +119,7 @@ router.post(
 // Update task (with role-based restrictions)
 router.put("/:id", updateTask);
 
-// Update task status
+// Update task status - WITH EVIDENCE SUPPORT
 router.patch(
   "/:id/status",
   [
@@ -133,7 +133,6 @@ router.patch(
         "rejected",
       ])
       .withMessage("Invalid status value"),
-    // Add optional validation for rejectionReason
     body("rejectionReason")
       .optional()
       .isString()
@@ -142,8 +141,27 @@ router.patch(
       .optional()
       .isString()
       .withMessage("Approval note must be a string"),
+    body("evidenceUrls")
+      .optional()
+      .isArray()
+      .withMessage("evidenceUrls must be an array"),
+    body("evidenceUrls.*")
+      .optional()
+      .isURL()
+      .withMessage("Each URL must be valid"),
   ],
   updateTaskStatus,
+);
+
+// Submit evidence separately (optional)
+router.post(
+  "/:id/evidence",
+  authenticate,
+  [
+    body("evidenceUrls").isArray().withMessage("evidenceUrls must be an array"),
+    body("evidenceUrls.*").isURL().withMessage("Each URL must be valid"),
+  ],
+  submitEvidence,
 );
 
 // ============= EXTENSION REQUESTS =============

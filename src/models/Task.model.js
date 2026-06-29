@@ -49,12 +49,11 @@ const taskSchema = new mongoose.Schema(
     isApprovalRequired: { type: Boolean, default: false },
     evidenceRequired: { type: Boolean, default: false },
     evidenceUrls: [{ type: String }],
+    evidenceSubmitted: { type: Boolean, default: false },
+    evidenceSubmittedAt: { type: Date },
     order: { type: Number, default: 0 },
-
-    // ADD THESE TWO FIELDS
     rejectionReason: { type: String, default: "" },
     approvalNote: { type: String, default: "" },
-
     extensionRequests: [
       {
         requestedDate: { type: Date, default: Date.now },
