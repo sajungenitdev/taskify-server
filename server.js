@@ -174,7 +174,7 @@ app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/leaves", leaveRoutes);
 app.use("/api/v1/teams", teamRoutes);
 app.use("/api/v1/attendance", attendanceRoutes);
-app.use("/api/onboarding", onboardingRoutes);
+app.use("/api/v1/onboarding", onboardingRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
