@@ -189,6 +189,9 @@ const getTaskById = async (req, res) => {
 };
 
 // Create task
+// controllers/task.controller.js - Updated createTask
+
+// Create task
 const createTask = async (req, res) => {
   try {
     const user = req.user;
@@ -214,21 +217,99 @@ const createTask = async (req, res) => {
       });
     }
 
-    // Get the project
-    const project = await Project.findById(projectId);
-    if (!project) {
-      return res.status(404).json({
-        success: false,
-        message: "Project not found",
-      });
-    }
-
+    // ========== PERMISSION CHECK ==========
     // Get the assigned user
     const assignedUser = await User.findById(assignedTo);
     if (!assignedUser) {
       return res.status(404).json({
         success: false,
         message: "Assigned user not found",
+      });
+    }
+
+    // Check if user has permission to create tasks
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isDeptManager = user.role === "dept_manager";
+    const isProjectManager = user.role === "project_manager";
+    const isLineManager = user.role === "line_manager";
+
+    // Check if user can assign tasks to others
+    let canAssignToOthers = false;
+    let canAssignToDepartment = false;
+
+    if (isAdmin) {
+      // Admins can assign to anyone
+      canAssignToOthers = true;
+      canAssignToDepartment = true;
+    } else if (isDeptManager) {
+      // Department managers can assign to users in their department
+      canAssignToOthers = true;
+      canAssignToDepartment = true;
+
+      // Check if assigned user is in the same department
+      const assignedUserDept = assignedUser.departmentId?.toString();
+      const managerDept = user.departmentId?.toString();
+
+      if (assignedUserDept !== managerDept) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only assign tasks to users in your department",
+        });
+      }
+    } else if (isProjectManager) {
+      // Project managers can assign to project team members
+      canAssignToOthers = true;
+
+      // Check if assigned user is in the project team
+      const project = await Project.findById(projectId);
+      if (project) {
+        const isInTeam = project.teamMembers?.some(
+          (member) => member.userId.toString() === assignedTo,
+        );
+        if (
+          !isInTeam &&
+          project.projectManager?.toString() !== user._id.toString()
+        ) {
+          return res.status(403).json({
+            success: false,
+            message: "User is not a member of this project",
+          });
+        }
+      }
+    } else if (isLineManager) {
+      // Line managers can assign to their direct reports
+      const isDirectReport =
+        assignedUser.managerId?.toString() === user._id.toString();
+      if (!isDirectReport) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only assign tasks to your direct reports",
+        });
+      }
+      canAssignToOthers = true;
+    } else if (user.role === "employee") {
+      // Employees can only create tasks for themselves
+      if (assignedTo !== user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only create tasks for yourself",
+        });
+      }
+      canAssignToOthers = false;
+    } else {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to create tasks",
+      });
+    }
+    // ========== END PERMISSION CHECK ==========
+
+    // Get the project
+    const project = await Project.findById(projectId);
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
       });
     }
 
@@ -243,7 +324,9 @@ const createTask = async (req, res) => {
     if (
       project.teamMembers &&
       project.teamMembers.length > 0 &&
-      !isInProjectTeam
+      !isInProjectTeam &&
+      !isAdmin &&
+      project.projectManager?.toString() !== user._id.toString()
     ) {
       return res.status(400).json({
         success: false,
