@@ -1,13 +1,14 @@
-const { User } = require('../models/User.model'); 
-const { Department } = require('../models/Department.model');
+const { User } = require("../models/User.model");
+const { Department } = require("../models/Department.model");
 
 /**
  * Get onboarding status for current user
  */
 exports.getOnboardingStatus = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .select("onboardingCompleted onboardingStep");
+    const user = await User.findById(req.user._id).select(
+      "onboardingCompleted onboardingStep",
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -38,36 +39,19 @@ exports.getOnboardingStatus = async (req, res) => {
 exports.completeOnboarding = async (req, res) => {
   try {
     const {
-      // Profile Setup
       fullName,
-      phone,
+      phoneNumber,
       location,
-      department,
+      departmentId,
       position,
       employeeId,
       bio,
-      
-      // Daily Hours Target
       dailyHoursTarget,
-      weeklyHoursTarget,
-      startTime,
-      endTime,
-      breakDuration,
-      workDays,
-      timezone,
-      overtimeThreshold,
-      
-      // Notification Preferences
-      emailNotifications,
-      pushNotifications,
-      taskReminders,
-      taskReminderTime,
-      leaveApprovals,
-      teamUpdates,
-      dailyDigest,
-      weeklyReport,
-      mentionNotifications,
-      commentNotifications,
+      workSettings,
+      notificationPreferences,
+      profilePhoto,
+      onboardingCompleted,
+      firstLogin,
     } = req.body;
 
     const user = await User.findById(req.user._id);
@@ -79,48 +63,122 @@ exports.completeOnboarding = async (req, res) => {
       });
     }
 
-    // Update user profile
-    user.fullName = fullName || user.fullName;
-    user.phone = phone || user.phone;
-    user.location = location || user.location;
-    
-    if (department) {
-      user.departmentId = department;
+    // Validate department if provided
+    if (departmentId) {
+      const department = await Department.findById(departmentId);
+      if (!department) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid department ID",
+        });
+      }
     }
-    
-    user.position = position || user.position;
-    user.employeeId = employeeId || user.employeeId;
-    user.bio = bio || user.bio;
 
-    // Update working hours settings
-    user.settings = {
-      ...user.settings,
-      dailyHoursTarget: dailyHoursTarget || 8,
-      weeklyHoursTarget: weeklyHoursTarget || 40,
-      startTime: startTime || "09:00",
-      endTime: endTime || "18:00",
-      breakDuration: breakDuration || 60,
-      workDays: workDays || ["monday", "tuesday", "wednesday", "thursday", "friday"],
-      timezone: timezone || "UTC+06:00",
-      overtimeThreshold: overtimeThreshold || 2,
+    // Update basic profile
+    if (fullName) user.fullName = fullName;
+    if (phoneNumber) user.phoneNumber = phoneNumber;
+    if (location) user.location = location;
+    if (departmentId) user.departmentId = departmentId;
+    if (position) user.position = position;
+    if (employeeId) user.employeeId = employeeId;
+    if (bio) user.bio = bio;
+
+    // Update daily hours target if provided
+    if (dailyHoursTarget) {
+      user.dailyHoursTarget = dailyHoursTarget;
+    }
+
+    // Update work settings
+    user.workSettings = {
+      dailyHoursTarget:
+        workSettings?.dailyHoursTarget ||
+        user.workSettings?.dailyHoursTarget ||
+        8,
+      weeklyHoursTarget:
+        workSettings?.weeklyHoursTarget ||
+        user.workSettings?.weeklyHoursTarget ||
+        40,
+      startTime:
+        workSettings?.startTime || user.workSettings?.startTime || "09:00",
+      endTime: workSettings?.endTime || user.workSettings?.endTime || "18:00",
+      breakDuration:
+        workSettings?.breakDuration || user.workSettings?.breakDuration || 60,
+      workDays: workSettings?.workDays ||
+        user.workSettings?.workDays || [
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+        ],
+      timezone:
+        workSettings?.timezone || user.workSettings?.timezone || "UTC+06:00",
+      overtimeThreshold:
+        workSettings?.overtimeThreshold ||
+        user.workSettings?.overtimeThreshold ||
+        2,
     };
 
     // Update notification preferences
     user.notificationPreferences = {
-      emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
-      pushNotifications: pushNotifications !== undefined ? pushNotifications : true,
-      taskReminders: taskReminders !== undefined ? taskReminders : true,
-      taskReminderTime: taskReminderTime || "09:00",
-      leaveApprovals: leaveApprovals !== undefined ? leaveApprovals : true,
-      teamUpdates: teamUpdates !== undefined ? teamUpdates : true,
-      dailyDigest: dailyDigest !== undefined ? dailyDigest : true,
-      weeklyReport: weeklyReport !== undefined ? weeklyReport : true,
-      mentionNotifications: mentionNotifications !== undefined ? mentionNotifications : true,
-      commentNotifications: commentNotifications !== undefined ? commentNotifications : true,
+      email:
+        notificationPreferences?.email ??
+        user.notificationPreferences?.email ??
+        true,
+      push:
+        notificationPreferences?.push ??
+        user.notificationPreferences?.push ??
+        true,
+      desktop:
+        notificationPreferences?.desktop ??
+        user.notificationPreferences?.desktop ??
+        false,
+      taskReminder:
+        notificationPreferences?.taskReminder ??
+        user.notificationPreferences?.taskReminder ??
+        true,
+      taskReminderTime:
+        notificationPreferences?.taskReminderTime ||
+        user.notificationPreferences?.taskReminderTime ||
+        "09:00",
+      deadlineAlert:
+        notificationPreferences?.deadlineAlert ??
+        user.notificationPreferences?.deadlineAlert ??
+        true,
+      leaveApprovals:
+        notificationPreferences?.leaveApprovals ??
+        user.notificationPreferences?.leaveApprovals ??
+        true,
+      teamUpdate:
+        notificationPreferences?.teamUpdate ??
+        user.notificationPreferences?.teamUpdate ??
+        true,
+      dailyDigest:
+        notificationPreferences?.dailyDigest ??
+        user.notificationPreferences?.dailyDigest ??
+        true,
+      weeklyReport:
+        notificationPreferences?.weeklyReport ??
+        user.notificationPreferences?.weeklyReport ??
+        true,
+      mentionNotifications:
+        notificationPreferences?.mentionNotifications ??
+        user.notificationPreferences?.mentionNotifications ??
+        true,
+      commentNotifications:
+        notificationPreferences?.commentNotifications ??
+        user.notificationPreferences?.commentNotifications ??
+        true,
     };
 
+    // Update profile photo if provided (base64)
+    if (profilePhoto) {
+      user.profilePhoto = profilePhoto;
+    }
+
     // Mark onboarding as completed
-    user.onboardingCompleted = true;
+    user.onboardingCompleted = onboardingCompleted ?? true;
+    user.firstLogin = firstLogin ?? false;
     user.onboardingStep = 3;
 
     await user.save();
@@ -129,7 +187,7 @@ exports.completeOnboarding = async (req, res) => {
       success: true,
       message: "Onboarding completed successfully",
       data: {
-        onboardingCompleted: true,
+        onboardingCompleted: user.onboardingCompleted,
         user: {
           _id: user._id,
           fullName: user.fullName,
@@ -163,6 +221,7 @@ exports.skipOnboarding = async (req, res) => {
     }
 
     user.onboardingCompleted = true;
+    user.firstLogin = false;
     user.onboardingStep = 3;
     await user.save();
 
