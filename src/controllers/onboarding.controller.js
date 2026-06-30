@@ -1,5 +1,5 @@
-const { User } = require("../models/user.model");
-const { Department } = require("../models/department.model");
+const { User } = require('../models/User.model'); 
+const { Department } = require('../models/Department.model');
 
 /**
  * Get onboarding status for current user
