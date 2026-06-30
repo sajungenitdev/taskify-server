@@ -24,10 +24,6 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
     },
-    profilePhoto: {
-      type: String,
-      default: null,
-    },
     password: {
       type: String,
       required: true,
@@ -45,7 +41,7 @@ const userSchema = new mongoose.Schema(
     },
     profilePhoto: {
       type: String,
-      default: "",
+      default: null, // ✅ Only ONE profilePhoto field
     },
 
     // ========== ROLE & DEPARTMENT ==========
@@ -223,12 +219,9 @@ const userSchema = new mongoose.Schema(
 
     // ========== NOTIFICATION PREFERENCES ==========
     notificationPreferences: {
-      // Channel preferences
       email: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
       desktop: { type: Boolean, default: false },
-
-      // Notification types
       taskReminder: { type: Boolean, default: true },
       taskReminderTime: {
         type: String,
@@ -252,22 +245,18 @@ const userSchema = new mongoose.Schema(
 );
 
 // ========== VIRTUAL FIELDS ==========
-// Get full name for display
 userSchema.virtual("displayName").get(function () {
   return this.fullName || this.email;
 });
 
-// Get department name
 userSchema.virtual("departmentName").get(function () {
   return this.departmentId?.name || "Not Assigned";
 });
 
-// Check if user is admin
 userSchema.virtual("isAdmin").get(function () {
   return ["super_admin", "admin", "hr_manager"].includes(this.role);
 });
 
-// Check if user is manager
 userSchema.virtual("isManager").get(function () {
   return ["dept_manager", "project_manager", "line_manager"].includes(
     this.role,
@@ -330,10 +319,8 @@ userSchema.statics.findOnboardingIncomplete = function () {
 // ========== FIX: Check if model exists before creating ==========
 let User;
 try {
-  // Try to get existing model
   User = mongoose.model("User");
 } catch (error) {
-  // Model doesn't exist, create it
   User = mongoose.model("User", userSchema);
 }
 
