@@ -1,8 +1,10 @@
+// routes/auth.routes.js - Updated
+
 const express = require("express");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const { uploadProfile } = require("../config/multer");
 const {
-  login, // ✅ ADD THIS - login function
+  login,
   getMe,
   updateMyProfile,
   uploadProfilePhoto,
@@ -23,12 +25,11 @@ const {
 const router = express.Router();
 
 // ============ PUBLIC ROUTES (no authentication required) ============
-// ✅ These routes must come BEFORE router.use(authenticate)
 router.post("/register", register);
-router.post("/login", login); // ← THIS WAS MISSING!
+router.post("/login", login);
 router.get("/active-users", getActiveUsers);
-router.post("/forgot-password", forgotPassword); // ADD THIS
-router.post("/reset-password/:token", resetPassword); // ADD THIS
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password/:token", resetPassword);
 
 // ============ ALL ROUTES BELOW REQUIRE AUTHENTICATION ============
 router.use(authenticate);
@@ -38,7 +39,6 @@ router.get("/me", getMe);
 router.put("/profile", updateMyProfile);
 router.post("/profile/photo", uploadProfile, uploadProfilePhoto);
 router.post("/change-password", changePassword);
-
 
 // ============ EXPORT AND IMPORT ROUTES ============
 router.get(
@@ -52,24 +52,24 @@ router.post(
   bulkImportUsers,
 );
 
-// ============ ADMIN ROUTES ============
-// Get all users
-router.get(
-  "/users",
-  requireRole("admin", "super_admin", "hr_manager", "employee"),
-  getAllUsers,
-);
-router.get(
-  "/users/active",
-  requireRole("admin", "super_admin", "hr_manager", "employee"),
-  getActiveUsers,
-);
+// ============ USER MANAGEMENT ROUTES ============
+// ✅ UPDATED: Allow all authenticated users with role-based filtering in controller
+router.get("/users", authenticate, getAllUsers);
+router.get("/users/active", authenticate, getActiveUsers);
 
-// Get user by ID
-router.get("/users/:id", requireRole("admin", "super_admin"), getUserProfile);
+// Get user by ID - Only admins can view other users' full profiles
+router.get(
+  "/users/:id",
+  requireRole("admin", "super_admin", "hr_manager"),
+  getUserProfile,
+);
 
 // Update user
-router.put("/users/:id", requireRole("admin", "super_admin"), updateUser);
+router.put(
+  "/users/:id",
+  requireRole("admin", "super_admin", "hr_manager"),
+  updateUser,
+);
 
 // Delete user (Super Admin only)
 router.delete("/users/:id", requireRole("super_admin"), deleteUser);
