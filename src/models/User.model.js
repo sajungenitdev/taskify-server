@@ -41,7 +41,7 @@ const userSchema = new mongoose.Schema(
     },
     profilePhoto: {
       type: String,
-      default: null, // ✅ Only ONE profilePhoto field
+      default: null,
     },
 
     // ========== ROLE & DEPARTMENT ==========
@@ -130,32 +130,6 @@ const userSchema = new mongoose.Schema(
       twitter: { type: String, default: "" },
       facebook: { type: String, default: "" },
       instagram: { type: String, default: "" },
-    },
-
-    managerId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    departmentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Department",
-    },
-    role: {
-      type: String,
-      enum: [
-        "employee",
-        "line_manager",
-        "dept_manager",
-        "project_manager",
-        "admin",
-        "super_admin",
-        "hr_manager",
-      ],
-      default: "employee",
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
     },
 
     // ========== ADDRESS ==========
