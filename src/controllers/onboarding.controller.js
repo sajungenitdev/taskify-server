@@ -54,7 +54,6 @@ exports.completeOnboarding = async (req, res) => {
       firstLogin,
     } = req.body;
 
-    // 🔍 Debug log - see what we're receiving
     console.log("📝 Onboarding Data Received:", {
       fullName,
       phoneNumber,
@@ -65,13 +64,10 @@ exports.completeOnboarding = async (req, res) => {
       bio: bio ? bio.substring(0, 50) + "..." : null,
       hasPhoto: !!profilePhoto,
       photoLength: profilePhoto?.length || 0,
-      dailyHoursTarget,
-      hasWorkSettings: !!workSettings,
-      hasNotificationPrefs: !!notificationPreferences,
     });
 
+    // Find user
     const user = await User.findById(req.user._id);
-
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -79,31 +75,37 @@ exports.completeOnboarding = async (req, res) => {
       });
     }
 
-    // 🔍 Debug log - before update
     console.log("👤 User before update:", {
       id: user._id,
       fullName: user.fullName,
       phoneNumber: user.phoneNumber,
       location: user.location,
       bio: user.bio,
+      position: user.position,
+      employeeId: user.employeeId,
+      departmentId: user.departmentId,
       hasPhoto: !!user.profilePhoto,
     });
 
-    // Update basic profile
-    if (fullName) user.fullName = fullName;
-    if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
-    if (location !== undefined) user.location = location;
-    if (departmentId) user.departmentId = departmentId;
-    if (position !== undefined) user.position = position;
-    if (employeeId) user.employeeId = employeeId;
-    if (bio !== undefined) user.bio = bio;
+    // ✅ UPDATE ALL FIELDS - Map correctly to schema
+    user.fullName = fullName || user.fullName;
+    user.phoneNumber = phoneNumber || user.phoneNumber || "";
+    user.location = location || user.location || "";
+    user.position = position || user.position || "";
+    user.employeeId = employeeId || user.employeeId || "";
+    user.bio = bio || user.bio || "";
 
-    // Update daily hours target if provided
+    // Handle department - ensure it's a valid ObjectId or null
+    if (departmentId) {
+      user.departmentId = departmentId;
+    }
+
+    // Update daily hours target
     if (dailyHoursTarget) {
       user.dailyHoursTarget = dailyHoursTarget;
     }
 
-    // Update work settings
+    // ✅ Update workSettings
     if (workSettings) {
       user.workSettings = {
         dailyHoursTarget:
@@ -136,96 +138,97 @@ exports.completeOnboarding = async (req, res) => {
       };
     }
 
-    // Update notification preferences
+    // ✅ Update notificationPreferences
     if (notificationPreferences) {
       user.notificationPreferences = {
         email:
           notificationPreferences.email !== undefined
             ? notificationPreferences.email
-            : (user.notificationPreferences?.email ?? true),
+            : true,
         push:
           notificationPreferences.push !== undefined
             ? notificationPreferences.push
-            : (user.notificationPreferences?.push ?? true),
+            : true,
         desktop:
           notificationPreferences.desktop !== undefined
             ? notificationPreferences.desktop
-            : (user.notificationPreferences?.desktop ?? false),
+            : false,
         taskReminder:
           notificationPreferences.taskReminder !== undefined
             ? notificationPreferences.taskReminder
-            : (user.notificationPreferences?.taskReminder ?? true),
-        taskReminderTime:
-          notificationPreferences.taskReminderTime ||
-          user.notificationPreferences?.taskReminderTime ||
-          "09:00",
+            : true,
+        taskReminderTime: notificationPreferences.taskReminderTime || "09:00",
         deadlineAlert:
           notificationPreferences.deadlineAlert !== undefined
             ? notificationPreferences.deadlineAlert
-            : (user.notificationPreferences?.deadlineAlert ?? true),
+            : true,
         leaveApprovals:
           notificationPreferences.leaveApprovals !== undefined
             ? notificationPreferences.leaveApprovals
-            : (user.notificationPreferences?.leaveApprovals ?? true),
+            : true,
         teamUpdate:
           notificationPreferences.teamUpdate !== undefined
             ? notificationPreferences.teamUpdate
-            : (user.notificationPreferences?.teamUpdate ?? true),
+            : true,
         dailyDigest:
           notificationPreferences.dailyDigest !== undefined
             ? notificationPreferences.dailyDigest
-            : (user.notificationPreferences?.dailyDigest ?? true),
+            : true,
         weeklyReport:
           notificationPreferences.weeklyReport !== undefined
             ? notificationPreferences.weeklyReport
-            : (user.notificationPreferences?.weeklyReport ?? true),
+            : true,
         mentionNotifications:
           notificationPreferences.mentionNotifications !== undefined
             ? notificationPreferences.mentionNotifications
-            : (user.notificationPreferences?.mentionNotifications ?? true),
+            : true,
         commentNotifications:
           notificationPreferences.commentNotifications !== undefined
             ? notificationPreferences.commentNotifications
-            : (user.notificationPreferences?.commentNotifications ?? true),
+            : true,
       };
     }
 
-    // Update profile photo if provided (base64)
+    // ✅ Update profile photo if provided
     if (profilePhoto && profilePhoto.length > 100) {
-      // Only save if it's a valid base64 string
       let photoData = profilePhoto;
       if (!photoData.startsWith("data:image")) {
         photoData = `data:image/jpeg;base64,${photoData}`;
       }
       user.profilePhoto = photoData;
       console.log("✅ Profile photo saved, length:", photoData.length);
-    } else if (profilePhoto && profilePhoto.length < 100) {
-      console.warn(
-        "⚠️ Profile photo too short, skipping:",
-        profilePhoto.length,
-      );
     }
 
-    // Mark onboarding as completed
+    // ✅ Mark onboarding as completed
     user.onboardingCompleted =
       onboardingCompleted !== undefined ? onboardingCompleted : true;
     user.firstLogin = firstLogin !== undefined ? firstLogin : false;
     user.onboardingStep = 3;
 
+    // ✅ Save the user - IMPORTANT: use markModified for nested objects
+    if (workSettings) {
+      user.markModified("workSettings");
+    }
+    if (notificationPreferences) {
+      user.markModified("notificationPreferences");
+    }
+
     await user.save();
 
-    // 🔍 Debug log - after update
     console.log("✅ User after update:", {
       id: user._id,
       fullName: user.fullName,
       phoneNumber: user.phoneNumber,
       location: user.location,
       bio: user.bio,
+      position: user.position,
+      employeeId: user.employeeId,
+      departmentId: user.departmentId,
       hasPhoto: !!user.profilePhoto,
       onboardingCompleted: user.onboardingCompleted,
     });
 
-    // Return the updated user data
+    // ✅ Return updated user
     const updatedUser = await User.findById(user._id)
       .select("-password -resetPasswordToken -resetPasswordExpires")
       .populate("departmentId", "name code");

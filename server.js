@@ -157,6 +157,7 @@ const leaveRoutes = require("./src/routes/leave.routes");
 const teamRoutes = require("./src/routes/team.routes");
 const attendanceRoutes = require("./src/routes/attendance.routes");
 const onboardingRoutes = require("./src/routes/onboarding.routes");
+const workloadRoutes = require("./src/routes/workload.routes");
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -175,6 +176,7 @@ app.use("/api/v1/leaves", leaveRoutes);
 app.use("/api/v1/teams", teamRoutes);
 app.use("/api/v1/attendance", attendanceRoutes);
 app.use("/api/v1/onboarding", onboardingRoutes);
+app.use("/api/workload", workloadRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
