@@ -113,6 +113,8 @@ const getMyTasks = async (req, res) => {
 const getTaskById = async (req, res) => {
   try {
     const { id } = req.params;
+    const user = req.user;
+
     const task = await Task.findById(id)
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
@@ -123,6 +125,61 @@ const getTaskById = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Task not found" });
     }
+
+    // ========== PERMISSION CHECK ==========
+    // Check if user is the assignee
+    const isAssignee =
+      task.assignedTo && task.assignedTo._id.toString() === user._id.toString();
+
+    // Check if user is the creator
+    const isCreator =
+      task.assignedBy && task.assignedBy._id.toString() === user._id.toString();
+
+    // Check if user has admin/manager roles
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+
+    // Check if user is department manager of the task's department
+    const isDeptManager =
+      user.role === "dept_manager" &&
+      task.departmentId &&
+      user.departmentId &&
+      user.departmentId.toString() === task.departmentId.toString();
+
+    // Check if user is project manager of the task's project
+    let isProjectManager = false;
+    if (user.role === "project_manager" && task.projectId) {
+      const project = await Project.findById(task.projectId._id);
+      if (project && project.projectManager) {
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
+      }
+    }
+
+    // Check if user is line manager of the assignee
+    let isLineManager = false;
+    if (user.role === "line_manager" && task.assignedTo) {
+      const assignee = await User.findById(task.assignedTo._id);
+      if (assignee && assignee.managerId) {
+        isLineManager = assignee.managerId.toString() === user._id.toString();
+      }
+    }
+
+    // Check if user has permission to view this task
+    const canView =
+      isAssignee ||
+      isCreator ||
+      isAdmin ||
+      isDeptManager ||
+      isProjectManager ||
+      isLineManager;
+
+    if (!canView) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to view this task",
+      });
+    }
+    // ========== END PERMISSION CHECK ==========
 
     res.json({ success: true, data: task });
   } catch (error) {
@@ -246,7 +303,6 @@ const updateTask = async (req, res) => {
     const updates = req.body;
     const user = req.user;
 
-    // Don't allow updating certain fields based on role
     const task = await Task.findById(id);
     if (!task) {
       return res.status(404).json({
@@ -255,7 +311,34 @@ const updateTask = async (req, res) => {
       });
     }
 
-    // Role-based update restrictions
+    // ========== PERMISSION CHECK ==========
+    const isAssignee = task.assignedTo.toString() === user._id.toString();
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isDeptManager =
+      user.role === "dept_manager" &&
+      user.departmentId &&
+      task.departmentId &&
+      user.departmentId.toString() === task.departmentId.toString();
+
+    // Check if user is project manager
+    let isProjectManager = false;
+    if (user.role === "project_manager" && task.projectId) {
+      const project = await Project.findById(task.projectId);
+      if (project && project.projectManager) {
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
+      }
+    }
+
+    // Only assignee or admins/managers can update
+    if (!isAssignee && !isAdmin && !isDeptManager && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to update this task",
+      });
+    }
+
+    // Role-based update restrictions for employees
     if (user.role === "employee") {
       // Employees can only update status and add evidence
       const allowedUpdates = ["status", "evidenceUrls"];
@@ -271,6 +354,7 @@ const updateTask = async (req, res) => {
         });
       }
     }
+    // ========== END PERMISSION CHECK ==========
 
     const updatedTask = await Task.findByIdAndUpdate(id, updates, {
       new: true,
@@ -303,6 +387,7 @@ const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, rejectionReason, approvalNote, evidenceUrls } = req.body;
+    const user = req.user;
 
     const validStatuses = [
       "pending",
@@ -332,6 +417,53 @@ const updateTaskStatus = async (req, res) => {
         message: "Task not found",
       });
     }
+
+    // ========== PERMISSION CHECK ==========
+    const isAssignee =
+      oldTask.assignedTo._id.toString() === user._id.toString();
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isDeptManager =
+      user.role === "dept_manager" &&
+      user.departmentId &&
+      oldTask.departmentId &&
+      user.departmentId.toString() === oldTask.departmentId.toString();
+
+    // Check if user is project manager
+    let isProjectManager = false;
+    if (user.role === "project_manager" && oldTask.projectId) {
+      const project = await Project.findById(oldTask.projectId._id);
+      if (project && project.projectManager) {
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
+      }
+    }
+
+    // Only assignee or admins/managers can update status
+    if (!isAssignee && !isAdmin && !isDeptManager && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to update this task status",
+      });
+    }
+
+    // Only admins/managers can approve/reject
+    const isApprovalAction = status === "completed" || status === "rejected";
+    if (isApprovalAction && !isAdmin && !isDeptManager && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "Only managers can approve or reject tasks",
+      });
+    }
+
+    // Only assignee can submit for review
+    if (status === "submitted" && !isAssignee) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assigned employee can submit this task",
+      });
+    }
+    // ========== END PERMISSION CHECK ==========
+
     const oldStatus = oldTask.status;
 
     // CHECK: If task requires evidence and user is trying to submit
@@ -341,7 +473,7 @@ const updateTaskStatus = async (req, res) => {
       const hasExistingEvidence =
         oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
 
-      // Also check attachments (if you want to consider attachments as evidence)
+      // Also check attachments
       const Attachment = require("../models/Attachment.model");
       const attachments = await Attachment.find({ taskId: id });
       const hasAttachments = attachments && attachments.length > 0;
@@ -371,7 +503,6 @@ const updateTaskStatus = async (req, res) => {
 
     // Store evidence URLs if provided
     if (evidenceUrls && evidenceUrls.length > 0) {
-      // Merge with existing evidence URLs
       const existingUrls = oldTask.evidenceUrls || [];
       const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
       updateData.evidenceUrls = allUrls;
@@ -635,6 +766,7 @@ const approveExtension = async (req, res) => {
 const deleteTask = async (req, res) => {
   try {
     const { id } = req.params;
+    const user = req.user;
 
     const task = await Task.findById(id);
     if (!task) {
@@ -642,6 +774,33 @@ const deleteTask = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Task not found" });
     }
+
+    // ========== PERMISSION CHECK ==========
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isDeptManager =
+      user.role === "dept_manager" &&
+      user.departmentId &&
+      task.departmentId &&
+      user.departmentId.toString() === task.departmentId.toString();
+
+    // Check if user is project manager
+    let isProjectManager = false;
+    if (user.role === "project_manager" && task.projectId) {
+      const project = await Project.findById(task.projectId);
+      if (project && project.projectManager) {
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
+      }
+    }
+
+    // Only admins and managers can delete tasks
+    if (!isAdmin && !isDeptManager && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to delete this task",
+      });
+    }
+    // ========== END PERMISSION CHECK ==========
 
     // Update project task count before deletion
     await Project.findByIdAndUpdate(task.projectId, {
