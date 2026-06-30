@@ -22,7 +22,7 @@ const getTeamWorkload = async (req, res) => {
       const query = { isActive: true };
       if (departmentId) query.departmentId = departmentId;
       teamMembers = await User.find(query)
-        .select("_id fullName email employeeId departmentId role avatar")
+        .select("_id fullName email employeeId departmentId role avatar profilePhoto")
         .populate("departmentId", "name");
     } else if (user.role === "dept_manager") {
       // Department managers see their department
@@ -188,6 +188,7 @@ const getTeamWorkload = async (req, res) => {
             department: departmentName,
             role: member.role,
             avatar: member.avatar || member.profilePhoto || null,
+            profilePhoto: member.profilePhoto || null,
           },
           workload: {
             activeHours: Math.round(activeWorkload * 10) / 10,
