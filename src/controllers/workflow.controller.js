@@ -1,5 +1,5 @@
-const { Workflow } = require("../models/workflow.model"); // or 'Workflow' depending on your file
-const { User } = require("../models/user.model"); // or 'User' depending on your file
+const { Workflow } = require("../models/workflow.model"); 
+const { User } = require("../models/User.model"); 
 
 // Get all workflows
 const getWorkflows = async (req, res) => {
