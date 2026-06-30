@@ -202,23 +202,130 @@ const logout = async (req, res) => {
 };
 
 // ============ GET ALL USERS (Admin only) ============
+// controllers/auth.controller.js - Updated getAllUsers
+
+// Get all users (with role-based filtering)
 const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find()
+    const user = req.user;
+    let query = {};
+
+    // ========== ROLE-BASED FILTERING ==========
+    if (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager") {
+      // Admins can see all users
+      // No additional filtering needed
+    } else if (user.role === "dept_manager") {
+      // Department managers can only see users in their department
+      if (user.departmentId) {
+        query.departmentId = user.departmentId;
+      } else {
+        // If department manager has no department, return empty
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
+        });
+      }
+    } else if (user.role === "project_manager") {
+      // Project managers can see project team members
+      const projects = await Project.find({ 
+        projectManager: user._id 
+      }).select("teamMembers");
+      
+      const teamMemberIds = projects.flatMap((p) => 
+        p.teamMembers?.map((m) => m.userId) || []
+      );
+      
+      // Add the project manager themselves
+      teamMemberIds.push(user._id);
+      
+      if (teamMemberIds.length > 0) {
+        query._id = { $in: teamMemberIds };
+      } else {
+        // If no team members, return empty
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
+        });
+      }
+    } else if (user.role === "line_manager") {
+      // Line managers can only see their direct reports
+      const teamMembers = await User.find({ managerId: user._id }).select("_id");
+      const memberIds = teamMembers.map((m) => m._id);
+      
+      // Add the line manager themselves
+      memberIds.push(user._id);
+      
+      if (memberIds.length > 0) {
+        query._id = { $in: memberIds };
+      } else {
+        // If no team members, return empty
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
+        });
+      }
+    } else if (user.role === "employee") {
+      // Employees can only see themselves
+      query._id = user._id;
+    } else {
+      // Unknown role - only see themselves
+      query._id = user._id;
+    }
+    // ========== END ROLE-BASED FILTERING ==========
+
+    // Allow additional filtering by department
+    if (req.query.departmentId && (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")) {
+      query.departmentId = req.query.departmentId;
+    }
+
+    // Allow filtering by role (admins only)
+    if (req.query.role && (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")) {
+      query.role = req.query.role;
+    }
+
+    // Allow search
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, "i");
+      query.$or = [
+        { fullName: searchRegex },
+        { email: searchRegex },
+        { employeeId: searchRegex },
+      ];
+    }
+
+    // Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 100;
+    const skip = (page - 1) * limit;
+
+    const users = await User.find(query)
       .select("-password")
       .populate("departmentId", "name code")
-      .sort({ createdAt: -1 });
+      .populate("managerId", "fullName email")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await User.countDocuments(query);
 
     res.json({
       success: true,
       data: users,
-      count: users.length,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
     console.error("Get all users error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };

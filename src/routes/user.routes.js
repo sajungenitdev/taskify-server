@@ -1,3 +1,4 @@
+// routes/user.routes.js
 const express = require("express");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -14,18 +15,27 @@ const router = express.Router();
 router.use(authenticate);
 
 // ============ USER MANAGEMENT ROUTES ============
-// Get all users
+
+// Get all users - Allow all authenticated users with role-based filtering
 router.get(
   "/",
-  requireRole("admin", "super_admin", "hr_manager", "employee"),
+  authenticate, // Just authenticate, let the controller handle filtering
   getAllUsers,
 );
 
-// Get user by ID
-router.get("/:id", requireRole("admin", "super_admin"), getUserProfile);
+// Get user by ID - Only admins can view other users' full profiles
+router.get(
+  "/:id",
+  requireRole("admin", "super_admin", "hr_manager"),
+  getUserProfile,
+);
 
 // Update user
-router.put("/:id", requireRole("admin", "super_admin"), updateUser);
+router.put(
+  "/:id",
+  requireRole("admin", "super_admin", "hr_manager"),
+  updateUser,
+);
 
 // Delete user (Super Admin only)
 router.delete("/:id", requireRole("super_admin"), deleteUser);
