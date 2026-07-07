@@ -17,6 +17,7 @@ const {
   getProjectTasksSummary,
   getTaskStatistics,
   submitEvidence, // ADD THIS IMPORT
+  bulkCreateTasksWithoutProject, // ADD THIS IMPORT
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 // Add these imports at the top of your routes file
@@ -76,7 +77,25 @@ router.post(
       .isISO8601()
       .withMessage("Each task must have a valid deadline"),
   ],
-  bulkCreateTasks,
+  bulkCreateTasksWithoutProject,
+);
+router.post(
+  "/bulk",
+  authenticate,
+  [
+    body("tasks").isArray().withMessage("Tasks must be an array"),
+    body("tasks.*.title").notEmpty().withMessage("Each task must have a title"),
+    body("tasks.*.description")
+      .notEmpty()
+      .withMessage("Each task must have a description"),
+    body("tasks.*.assignedTo")
+      .notEmpty()
+      .withMessage("Each task must have an assigned user"),
+    body("tasks.*.deadline")
+      .isISO8601()
+      .withMessage("Each task must have a valid deadline"),
+  ],
+  bulkCreateTasksWithoutProject, // New controller function
 );
 
 router.post(

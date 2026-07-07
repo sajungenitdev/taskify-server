@@ -41,27 +41,27 @@ router.get("/", getAllDepartments);
 router.get("/:id", getDepartmentById);
 router.get(
   "/:id/employees",
-  requireMinRole("dept_manager"),
+  requireRole("super_admin", "admin", "hr_manager", "dept_manager"),
   getDepartmentEmployees,
 );
 
 // Routes accessible only by Super Admin
 router.post(
   "/",
-  requireRole("super_admin"),
+  requireRole("super_admin", "admin", "hr_manager", "dept_manager"),
   createDepartmentValidation,
   createDepartment,
 );
 router.put(
   "/:id",
-  requireRole("super_admin"),
+  requireRole("super_admin", "admin", "hr_manager", "dept_manager"),
   updateDepartmentValidation,
   updateDepartment,
 );
-router.delete("/:id", requireRole("super_admin"), deleteDepartment);
+router.delete("/:id", requireRole("super_admin", "admin", "hr_manager", "dept_manager"), deleteDepartment);
 router.put(
   "/:id/update-count",
-  requireRole("super_admin"),
+  requireRole("super_admin", "admin", "hr_manager", "dept_manager"),
   updateDepartmentEmployeeCount,
 );
 

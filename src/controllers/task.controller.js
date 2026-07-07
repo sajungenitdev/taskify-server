@@ -907,6 +907,111 @@ const deleteTask = async (req, res) => {
 
 // ============= BULK OPERATIONS =============
 
+// Bulk create tasks without a project
+const bulkCreateTasksWithoutProject = async (req, res) => {
+  try {
+    const { tasks } = req.body;
+    const user = req.user;
+
+    if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Tasks array is required and cannot be empty",
+      });
+    }
+
+    if (tasks.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 100 tasks per bulk upload",
+      });
+    }
+
+    // Get the user's department ID
+    const userDepartmentId = user.departmentId || null;
+
+    // Validate each task
+    const validationErrors = [];
+    const validTasks = [];
+
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      const errors = [];
+
+      if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
+      if (!task.description) errors.push(`Task ${i + 1}: Description is required`);
+      if (!task.assignedTo) errors.push(`Task ${i + 1}: AssignedTo is required`);
+      if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
+
+      // Validate assigned user exists
+      if (task.assignedTo) {
+        const assignedUser = await User.findById(task.assignedTo);
+        if (!assignedUser) {
+          errors.push(`Task ${i + 1}: Assigned user not found`);
+        }
+      }
+
+      if (errors.length > 0) {
+        validationErrors.push(...errors);
+      } else {
+        // Get the assigned user's department or fallback to user's department
+        const assignedUser = await User.findById(task.assignedTo);
+        const departmentId = assignedUser?.departmentId || userDepartmentId || null;
+
+        validTasks.push({
+          title: task.title,
+          description: task.description,
+          assignedTo: task.assignedTo,
+          assignedBy: user._id,
+          departmentId: departmentId, // ✅ Now we provide departmentId
+          priority: task.priority || "normal",
+          status: "pending",
+          estimatedHours: task.estimatedHours || 0,
+          deadline: new Date(task.deadline),
+          isApprovalRequired: task.isApprovalRequired || false,
+          evidenceRequired: task.evidenceRequired || false,
+          // projectId is not set - tasks will be created without a project
+        });
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errors: validationErrors,
+      });
+    }
+
+    // Bulk insert tasks
+    const createdTasks = await Task.insertMany(validTasks);
+
+    // Populate the created tasks
+    const populatedTasks = await Task.find({
+      _id: { $in: createdTasks.map((t) => t._id) },
+    })
+      .populate("assignedTo", "fullName email employeeId")
+      .populate("assignedBy", "fullName email");
+
+    // Send notifications for each created task
+    for (const task of populatedTasks) {
+      await NotificationService.sendTaskAssigned(task._id);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully created ${createdTasks.length} tasks and sent notifications`,
+      data: populatedTasks,
+    });
+  } catch (error) {
+    console.error("Bulk create tasks without project error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
 // Bulk create tasks for a project
 const bulkCreateTasks = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1494,4 +1599,5 @@ module.exports = {
   getProjectTasksSummary,
   getTaskStatistics,
   submitEvidence,
+  bulkCreateTasksWithoutProject,
 };
