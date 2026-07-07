@@ -906,6 +906,7 @@ const deleteTask = async (req, res) => {
 };
 
 // ============= BULK OPERATIONS =============
+// controllers/task.controller.js - Updated bulkCreateTasksWithoutProject
 
 // Bulk create tasks without a project
 const bulkCreateTasksWithoutProject = async (req, res) => {
@@ -939,8 +940,10 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
       const errors = [];
 
       if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
-      if (!task.description) errors.push(`Task ${i + 1}: Description is required`);
-      if (!task.assignedTo) errors.push(`Task ${i + 1}: AssignedTo is required`);
+      if (!task.description)
+        errors.push(`Task ${i + 1}: Description is required`);
+      if (!task.assignedTo)
+        errors.push(`Task ${i + 1}: AssignedTo is required`);
       if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
 
       // Validate assigned user exists
@@ -956,7 +959,8 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
       } else {
         // Get the assigned user's department or fallback to user's department
         const assignedUser = await User.findById(task.assignedTo);
-        const departmentId = assignedUser?.departmentId || userDepartmentId || null;
+        const departmentId =
+          assignedUser?.departmentId || userDepartmentId || null;
 
         validTasks.push({
           title: task.title,
@@ -1582,6 +1586,93 @@ const getTaskStatistics = async (req, res) => {
   }
 };
 
+const getExtensionRequests = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    // Check if task exists
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Permission check - only assignee, admins, and managers can view extension requests
+    const isAssignee = task.assignedTo.toString() === user._id.toString();
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isDeptManager =
+      user.role === "dept_manager" &&
+      user.departmentId &&
+      task.departmentId &&
+      user.departmentId.toString() === task.departmentId.toString();
+
+    // Check if user is project manager
+    let isProjectManager = false;
+    if (user.role === "project_manager" && task.projectId) {
+      const project = await Project.findById(task.projectId);
+      if (project && project.projectManager) {
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
+      }
+    }
+
+    // Check if user is line manager of the assignee
+    let isLineManager = false;
+    if (user.role === "line_manager" && task.assignedTo) {
+      const assignee = await User.findById(task.assignedTo);
+      if (assignee && assignee.managerId) {
+        isLineManager = assignee.managerId.toString() === user._id.toString();
+      }
+    }
+
+    const canView =
+      isAssignee ||
+      isAdmin ||
+      isDeptManager ||
+      isProjectManager ||
+      isLineManager;
+
+    if (!canView) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to view extension requests",
+      });
+    }
+
+    // Get extension requests from the task
+    const extensionRequests = task.extensionRequests || [];
+
+    // Sort by createdAt descending
+    extensionRequests.sort((a, b) => {
+      return (
+        new Date(b.createdAt || b.requestedDate) -
+        new Date(a.createdAt || a.requestedDate)
+      );
+    });
+
+    res.json({
+      success: true,
+      data: extensionRequests.map((req) => ({
+        _id: req._id,
+        requestedDate: req.requestedDate,
+        reason: req.reason,
+        status: req.status,
+        approvedBy: req.approvedBy,
+        createdAt: req.createdAt || req.requestedDate,
+      })),
+    });
+  } catch (error) {
+    console.error("Get extension requests error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
 module.exports = {
   getTasks,
   getMyTasks,
@@ -1600,4 +1691,5 @@ module.exports = {
   getTaskStatistics,
   submitEvidence,
   bulkCreateTasksWithoutProject,
+  getExtensionRequests, // ✅ ADD THIS - Required for the route
 };

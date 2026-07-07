@@ -18,6 +18,7 @@ const {
   getTaskStatistics,
   submitEvidence, // ADD THIS IMPORT
   bulkCreateTasksWithoutProject, // ADD THIS IMPORT
+  getExtensionRequests, // ✅ ADD THIS IMPORT
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 // Add these imports at the top of your routes file
@@ -228,5 +229,34 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 
 // ============= DELETE TASK =============
 router.delete("/:id", requireRole("admin", "dept_manager"), deleteTask);
+
+// Get all extension requests for a task
+router.get(
+  "/:id/extension-requests",
+  authenticate,
+  getExtensionRequests,
+);
+
+router.post(
+  "/:id/request-extension",
+  [
+    body("requestedDate")
+      .isISO8601()
+      .withMessage("Valid requested date is required"),
+    body("reason").notEmpty().withMessage("Reason is required"),
+  ],
+  requestExtension,
+);
+
+router.post(
+  "/:id/approve-extension/:extensionId",
+  requireRole("admin", "dept_manager", "line_manager"),
+  [
+    body("newDeadline")
+      .isISO8601()
+      .withMessage("Valid new deadline is required"),
+  ],
+  approveExtension,
+);
 
 module.exports = router;
