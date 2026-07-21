@@ -1,3 +1,4 @@
+// models/Department.model.js
 const mongoose = require("mongoose");
 
 const departmentSchema = new mongoose.Schema(
@@ -49,7 +50,6 @@ const departmentSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    // Additional fields for better tracking
     budget: {
       type: Number,
       default: 0,
@@ -71,12 +71,10 @@ const departmentSchema = new mongoose.Schema(
 );
 
 // ========== VIRTUAL FIELDS ==========
-// Get department head name
 departmentSchema.virtual("headName").get(function () {
   return this.headOfDepartment?.fullName || "Not Assigned";
 });
 
-// Get department head email
 departmentSchema.virtual("headEmail").get(function () {
   return this.headOfDepartment?.email || "";
 });
@@ -95,6 +93,18 @@ departmentSchema.methods.toJSON = function () {
   return obj;
 };
 
+// ========== UPDATE EMPLOYEE COUNT ==========
+departmentSchema.methods.updateEmployeeCount = async function () {
+  const { User } = require("./User.model");
+  const count = await User.countDocuments({
+    departmentId: this._id,
+    isActive: true,
+  });
+  this.employeeCount = count;
+  await this.save({ validateBeforeSave: false });
+  return count;
+};
+
 // ========== STATIC METHODS ==========
 departmentSchema.statics.findActive = function () {
   return this.find({ isActive: true });
@@ -104,13 +114,29 @@ departmentSchema.statics.findByCode = function (code) {
   return this.findOne({ code: code.toUpperCase() });
 };
 
+departmentSchema.statics.recountAll = async function () {
+  const { User } = require("./User.model");
+  const departments = await this.find({});
+  let updated = 0;
+
+  for (const dept of departments) {
+    const count = await User.countDocuments({
+      departmentId: dept._id,
+      isActive: true,
+    });
+    dept.employeeCount = count;
+    await dept.save({ validateBeforeSave: false });
+    updated++;
+  }
+
+  return updated;
+};
+
 // ========== FIX: Check if model exists before creating ==========
 let Department;
 try {
-  // Try to get existing model
   Department = mongoose.model("Department");
 } catch (error) {
-  // Model doesn't exist, create it
   Department = mongoose.model("Department", departmentSchema);
 }
 

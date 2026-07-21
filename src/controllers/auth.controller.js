@@ -212,7 +212,11 @@ const getAllUsers = async (req, res) => {
     let query = {};
 
     // ========== ROLE-BASED FILTERING ==========
-    if (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager") {
+    if (
+      user.role === "super_admin" ||
+      user.role === "admin" ||
+      user.role === "hr_manager"
+    ) {
       // Admins can see all users
       // No additional filtering needed
     } else if (user.role === "dept_manager") {
@@ -229,17 +233,17 @@ const getAllUsers = async (req, res) => {
       }
     } else if (user.role === "project_manager") {
       // Project managers can see project team members
-      const projects = await Project.find({ 
-        projectManager: user._id 
+      const projects = await Project.find({
+        projectManager: user._id,
       }).select("teamMembers");
-      
-      const teamMemberIds = projects.flatMap((p) => 
-        p.teamMembers?.map((m) => m.userId) || []
+
+      const teamMemberIds = projects.flatMap(
+        (p) => p.teamMembers?.map((m) => m.userId) || [],
       );
-      
+
       // Add the project manager themselves
       teamMemberIds.push(user._id);
-      
+
       if (teamMemberIds.length > 0) {
         query._id = { $in: teamMemberIds };
       } else {
@@ -252,12 +256,14 @@ const getAllUsers = async (req, res) => {
       }
     } else if (user.role === "line_manager") {
       // Line managers can only see their direct reports
-      const teamMembers = await User.find({ managerId: user._id }).select("_id");
+      const teamMembers = await User.find({ managerId: user._id }).select(
+        "_id",
+      );
       const memberIds = teamMembers.map((m) => m._id);
-      
+
       // Add the line manager themselves
       memberIds.push(user._id);
-      
+
       if (memberIds.length > 0) {
         query._id = { $in: memberIds };
       } else {
@@ -278,12 +284,22 @@ const getAllUsers = async (req, res) => {
     // ========== END ROLE-BASED FILTERING ==========
 
     // Allow additional filtering by department
-    if (req.query.departmentId && (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")) {
+    if (
+      req.query.departmentId &&
+      (user.role === "super_admin" ||
+        user.role === "admin" ||
+        user.role === "hr_manager")
+    ) {
       query.departmentId = req.query.departmentId;
     }
 
     // Allow filtering by role (admins only)
-    if (req.query.role && (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")) {
+    if (
+      req.query.role &&
+      (user.role === "super_admin" ||
+        user.role === "admin" ||
+        user.role === "hr_manager")
+    ) {
       query.role = req.query.role;
     }
 
@@ -358,7 +374,7 @@ const getMe = async (req, res) => {
   }
 };
 
-// ============ REGISTER NEW USER (Admin only) ============
+// ============ REGISTER NEW USER (Admin only) - UPDATED ============
 const register = async (req, res) => {
   try {
     const {
@@ -413,6 +429,15 @@ const register = async (req, res) => {
       firstLogin: true,
     });
 
+    // ========== UPDATE DEPARTMENT COUNT ==========
+    if (departmentId) {
+      const { Department } = require("../models/Department.model");
+      const dept = await Department.findById(departmentId);
+      if (dept) {
+        await dept.updateEmployeeCount();
+      }
+    }
+
     const userResponse = sanitizeUser(user);
 
     res.status(201).json({
@@ -429,12 +454,23 @@ const register = async (req, res) => {
   }
 };
 
-// ============ UPDATE USER (Admin only) ============
+// ============ UPDATE USER (Admin only) - UPDATED ============
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const { fullName, phoneNumber, role, isActive, departmentId, employeeId } =
       req.body;
+
+    // Get current user to check department change
+    const currentUser = await User.findById(id);
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const oldDepartmentId = currentUser.departmentId?.toString();
 
     const user = await User.findByIdAndUpdate(
       id,
@@ -456,6 +492,26 @@ const updateUser = async (req, res) => {
       });
     }
 
+    // ========== UPDATE DEPARTMENT COUNTS ==========
+    if (departmentId && departmentId !== oldDepartmentId) {
+      const { Department } = require("../models/Department.model");
+
+      // Update old department
+      if (oldDepartmentId) {
+        const oldDept = await Department.findById(oldDepartmentId);
+        if (oldDept) {
+          await oldDept.updateEmployeeCount();
+        }
+      }
+      // Update new department
+      if (departmentId) {
+        const newDept = await Department.findById(departmentId);
+        if (newDept) {
+          await newDept.updateEmployeeCount();
+        }
+      }
+    }
+
     res.json({
       success: true,
       message: "User updated successfully",
@@ -470,7 +526,7 @@ const updateUser = async (req, res) => {
   }
 };
 
-// ============ DELETE USER (Admin only) ============
+// ============ DELETE USER (Admin only) - UPDATED ============
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -483,12 +539,26 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    const user = await User.findByIdAndDelete(id);
+    // Get user before deleting to get departmentId
+    const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({
         success: false,
         message: "User not found",
       });
+    }
+
+    const departmentId = user.departmentId;
+
+    await User.findByIdAndDelete(id);
+
+    // ========== UPDATE DEPARTMENT COUNT ==========
+    if (departmentId) {
+      const { Department } = require("../models/Department.model");
+      const dept = await Department.findById(departmentId);
+      if (dept) {
+        await dept.updateEmployeeCount();
+      }
     }
 
     res.json({
@@ -974,7 +1044,7 @@ const exportUsers = async (req, res) => {
   }
 };
 
-// ============ BULK IMPORT USERS ============
+// ============ BULK IMPORT USERS - UPDATED ============
 const bulkImportUsers = async (req, res) => {
   try {
     const { users } = req.body;
@@ -990,6 +1060,8 @@ const bulkImportUsers = async (req, res) => {
       successful: [],
       failed: [],
     };
+
+    const departmentsToUpdate = new Set();
 
     for (const userData of users) {
       try {
@@ -1019,9 +1091,24 @@ const bulkImportUsers = async (req, res) => {
           isActive: true,
         });
 
+        if (departmentId) {
+          departmentsToUpdate.add(departmentId.toString());
+        }
+
         results.successful.push(sanitizeUser(user));
       } catch (error) {
         results.failed.push({ ...userData, error: error.message });
+      }
+    }
+
+    // ========== UPDATE DEPARTMENT COUNTS ==========
+    if (departmentsToUpdate.size > 0) {
+      const { Department } = require("../models/Department.model");
+      for (const deptId of departmentsToUpdate) {
+        const dept = await Department.findById(deptId);
+        if (dept) {
+          await dept.updateEmployeeCount();
+        }
       }
     }
 

@@ -1,3 +1,4 @@
+// routes/task.routes.js
 const express = require("express");
 const { body } = require("express-validator");
 const {
@@ -16,12 +17,11 @@ const {
   reorderTasks,
   getProjectTasksSummary,
   getTaskStatistics,
-  submitEvidence, // ADD THIS IMPORT
-  bulkCreateTasksWithoutProject, // ADD THIS IMPORT
-  getExtensionRequests, // ✅ ADD THIS IMPORT
+  submitEvidence,
+  bulkCreateTasksWithoutProject,
+  getExtensionRequests,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
-// Add these imports at the top of your routes file
 const {
   getTaskComments,
   addComment,
@@ -29,14 +29,12 @@ const {
   deleteComment,
   toggleCommentLike,
 } = require("../controllers/comment.controller");
-
 const {
   uploadAttachments,
   getTaskAttachments,
   downloadAttachment,
   deleteAttachment,
 } = require("../controllers/attachment.controller");
-
 const {
   getTaskReviews,
   addReview,
@@ -50,13 +48,13 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 
-// ============= EMPLOYEE ROUTES =============
+// ============= IMPORTANT: Put specific routes BEFORE dynamic routes =============
+// Employee routes - must come before /:id routes
 router.get("/my-tasks", getMyTasks);
 router.get("/my-statistics", getTaskStatistics);
 
 // ============= TASK OPERATIONS =============
 router.get("/", getTasks);
-router.get("/:id", getTaskById);
 
 // ============= PROJECT-SPECIFIC TASK ROUTES =============
 router.get("/project/:projectId", getTasksByProject);
@@ -80,6 +78,7 @@ router.post(
   ],
   bulkCreateTasksWithoutProject,
 );
+
 router.post(
   "/bulk",
   authenticate,
@@ -96,7 +95,7 @@ router.post(
       .isISO8601()
       .withMessage("Each task must have a valid deadline"),
   ],
-  bulkCreateTasksWithoutProject, // New controller function
+  bulkCreateTasksWithoutProject,
 );
 
 router.post(
@@ -122,7 +121,7 @@ router.put(
 );
 
 // ============= SINGLE TASK OPERATIONS =============
-// Allow any authenticated user to create a task (no role restriction)
+// Create task - no role restriction, any authenticated user
 router.post(
   "/",
   authenticate,
@@ -136,10 +135,18 @@ router.post(
   createTask,
 );
 
-// Update task (with role-based restrictions)
+// ============= IMPORTANT: Specific task routes BEFORE /:id =============
+// Get extension requests - specific route
+router.get("/:id/extension-requests", authenticate, getExtensionRequests);
+
+// ============= /:id routes - MUST COME LAST =============
+// Get task by ID - dynamic route
+router.get("/:id", getTaskById);
+
+// Update task
 router.put("/:id", updateTask);
 
-// Update task status - WITH EVIDENCE SUPPORT
+// Update task status
 router.patch(
   "/:id/status",
   [
@@ -173,7 +180,7 @@ router.patch(
   updateTaskStatus,
 );
 
-// Submit evidence separately (optional)
+// Submit evidence
 router.post(
   "/:id/evidence",
   authenticate,
@@ -184,7 +191,7 @@ router.post(
   submitEvidence,
 );
 
-// ============= EXTENSION REQUESTS =============
+// Extension requests
 router.post(
   "/:id/request-extension",
   [
@@ -230,36 +237,4 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 // ============= DELETE TASK =============
 router.delete("/:id", requireRole("admin", "dept_manager"), deleteTask);
 
-// Get all extension requests for a task
-router.get(
-  "/:id/extension-requests",
-  authenticate,
-  getExtensionRequests,
-);
-
-router.post(
-  "/:id/request-extension",
-  [
-    body("requestedDate")
-      .isISO8601()
-      .withMessage("Valid requested date is required"),
-    body("reason").notEmpty().withMessage("Reason is required"),
-  ],
-  requestExtension,
-);
-
-router.post(
-  "/:id/approve-extension/:extensionId",
-  requireRole("admin", "dept_manager", "line_manager"),
-  [
-    body("newDeadline")
-      .isISO8601()
-      .withMessage("Valid new deadline is required"),
-  ],
-  approveExtension,
-);
-
 module.exports = router;
-
-
-// done it now

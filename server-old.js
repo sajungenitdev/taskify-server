@@ -1,8 +1,3 @@
-// ==================== DNS OVERRIDE FOR MONGODB SRV ====================
-// Force Node.js to use public DNS servers to resolve MongoDB Atlas SRV cluster records
-const dns = require("dns");
-dns.setServers(["8.8.8.8", "1.1.1.1"]);
-
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -41,7 +36,7 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
-
+// In server.js
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -68,7 +63,7 @@ app.use(
       "X-Requested-With",
       "Accept",
       "Origin",
-      "X-Request-ID",
+      "X-Request-ID", // ✅ ADD THIS - allow custom header
       "Access-Control-Request-Method",
       "Access-Control-Request-Headers",
     ],
@@ -79,7 +74,7 @@ app.use(
 
 // Handle preflight requests
 app.options("*", cors());
-
+app.options("*", cors());
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -95,7 +90,7 @@ const directories = [
   { path: uploadsPath, name: "uploads" },
   { path: path.join(uploadsPath, "tasks"), name: "tasks" },
   { path: path.join(uploadsPath, "avatars"), name: "avatars" },
-  { path: path.join(uploadsPath, "signatures"), name: "signatures" },
+  { path: path.join(uploadsPath, "signatures"), name: "signatures" }, // Added for leave signatures
 ];
 
 for (const dir of directories) {
@@ -163,9 +158,6 @@ const teamRoutes = require("./src/routes/team.routes");
 const attendanceRoutes = require("./src/routes/attendance.routes");
 const onboardingRoutes = require("./src/routes/onboarding.routes");
 const workloadRoutes = require("./src/routes/workload.routes");
-const kpiRoutes = require("./src/routes/kpi.routes");
-const kpiAnalyticsRoutes = require("./src/routes/kpi.analytics.routes");
-
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -185,8 +177,6 @@ app.use("/api/v1/teams", teamRoutes);
 app.use("/api/v1/attendance", attendanceRoutes);
 app.use("/api/v1/onboarding", onboardingRoutes);
 app.use("/api/v1/workload", workloadRoutes);
-app.use("/api/v1/kpi", kpiRoutes);
-app.use("/api/v1/kpi-analytics", kpiAnalyticsRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
@@ -263,8 +253,10 @@ app.use((err, req, res, next) => {
 // ==================== DATABASE CONNECTION ====================
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
-    // Deprecated options removed here
-    await mongoose.connect(process.env.MONGODB_URI);
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
     console.log("✅ MongoDB connected successfully");
     return true;
   } catch (error) {
@@ -367,6 +359,7 @@ process.on("unhandledRejection", (reason, promise) => {
 
 process.on("uncaughtException", (error) => {
   console.error("❌ Uncaught Exception:", error);
+  // Don't exit the process, just log the error
 });
 
 startServer();

@@ -1,3 +1,4 @@
+// models/Project.model.js
 const mongoose = require("mongoose");
 
 const projectSchema = new mongoose.Schema(
@@ -7,7 +8,7 @@ const projectSchema = new mongoose.Schema(
     description: { type: String },
     departmentId: { type: mongoose.Schema.Types.ObjectId, ref: "Department" },
     managerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // ADD THIS LINE
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     teamMembers: [
       {
         userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -21,7 +22,14 @@ const projectSchema = new mongoose.Schema(
     ],
     status: {
       type: String,
-      enum: ["planning", "active", "on_hold", "completed", "cancelled"],
+      enum: [
+        "planning",
+        "active",
+        "on_hold",
+        "completed",
+        "cancelled",
+        "archived",
+      ],
       default: "planning",
     },
     priority: {
@@ -41,6 +49,9 @@ const projectSchema = new mongoose.Schema(
     completedTasks: { type: Number, default: 0 },
     completedAt: { type: Date },
     isActive: { type: Boolean, default: true },
+    // ADD THESE FIELDS FOR ARCHIVE FUNCTIONALITY
+    archivedAt: { type: Date },
+    archivedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true },
 );
@@ -51,5 +62,6 @@ projectSchema.index({ status: 1 });
 projectSchema.index({ managerId: 1 });
 projectSchema.index({ departmentId: 1 });
 projectSchema.index({ createdBy: 1 });
+projectSchema.index({ archivedAt: 1 });
 
 module.exports = { Project: mongoose.model("Project", projectSchema) };

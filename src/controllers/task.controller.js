@@ -1,3 +1,5 @@
+// controllers/task.controller.js - Complete Updated Version
+
 const { Task } = require("../models/Task.model");
 const { User } = require("../models/User.model");
 const { Project } = require("../models/Project.model");
@@ -5,7 +7,14 @@ const mongoose = require("mongoose");
 const { NotificationService } = require("../services/notification.service");
 const { createNotification } = require("./notification.controller");
 
-// Get tasks based on user role
+// ============================================================
+// VALID STATUSES - Used for validation
+// ============================================================
+const VALID_STATUSES = ["pending", "in_progress", "submitted", "completed", "overdue", "rejected"];
+
+// ============================================================
+// GET TASKS - Optimized with parallel queries and lean
+// ============================================================
 const getTasks = async (req, res) => {
   try {
     const user = req.user;
@@ -17,14 +26,11 @@ const getTasks = async (req, res) => {
     if (user.role === "employee") {
       query.assignedTo = user._id;
     } else if (user.role === "line_manager") {
-      const teamMembers = await User.find({ managerId: user._id }).select(
-        "_id",
-      );
+      const teamMembers = await User.find({ managerId: user._id })
+        .select("_id")
+        .lean();
       query.assignedTo = { $in: [...teamMembers.map((m) => m._id), user._id] };
-    } else if (
-      user.role === "dept_manager" ||
-      user.role === "project_manager"
-    ) {
+    } else if (user.role === "dept_manager" || user.role === "project_manager") {
       query.departmentId = user.departmentId;
     }
     // Admin, Super Admin, HR can see all tasks
@@ -33,34 +39,49 @@ const getTasks = async (req, res) => {
     if (priority) query.priority = priority;
     if (projectId) query.projectId = projectId;
 
-    const tasks = await Task.find(query)
-      .populate("assignedTo", "fullName email employeeId")
-      .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code")
-      .sort({ createdAt: -1 })
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .limit(parseInt(limit));
+    // Parallel queries with lean for performance
+    const [tasks, total, stats] = await Promise.all([
+      Task.find(query)
+        .select("_id title description priority status deadline estimatedHours projectId createdAt updatedAt")
+        .populate("assignedTo", "fullName email employeeId")
+        .populate("assignedBy", "fullName email")
+        .populate("projectId", "name code")
+        .sort({ createdAt: -1 })
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(parseInt(limit))
+        .lean(),
+      Task.countDocuments(query),
+      Task.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+            inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
+            submitted: { $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] } },
+            completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+            overdue: { $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] } },
+            rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } },
+          },
+        },
+      ]),
+    ]);
 
-    const total = await Task.countDocuments(query);
-
-    // Calculate stats
-    const stats = {
-      total: await Task.countDocuments(query),
-      pending: await Task.countDocuments({ ...query, status: "pending" }),
-      inProgress: await Task.countDocuments({
-        ...query,
-        status: "in_progress",
-      }),
-      submitted: await Task.countDocuments({ ...query, status: "submitted" }),
-      completed: await Task.countDocuments({ ...query, status: "completed" }),
-      overdue: await Task.countDocuments({ ...query, status: "overdue" }),
-      rejected: await Task.countDocuments({ ...query, status: "rejected" }),
+    const statsData = stats[0] || {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      submitted: 0,
+      completed: 0,
+      overdue: 0,
+      rejected: 0,
     };
 
     res.json({
       success: true,
       data: tasks,
-      stats,
+      stats: statsData,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -74,7 +95,9 @@ const getTasks = async (req, res) => {
   }
 };
 
-// Get my tasks (for employee)
+// ============================================================
+// GET MY TASKS - Optimized for employee view
+// ============================================================
 const getMyTasks = async (req, res) => {
   try {
     const user = req.user;
@@ -83,25 +106,44 @@ const getMyTasks = async (req, res) => {
     const query = { assignedTo: user._id };
     if (status) query.status = status;
 
-    const tasks = await Task.find(query)
-      .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code")
-      .sort({ deadline: 1 });
+    const [tasks, stats] = await Promise.all([
+      Task.find(query)
+        .select("_id title description priority status deadline estimatedHours projectId createdAt updatedAt")
+        .populate("assignedBy", "fullName email")
+        .populate("projectId", "name code")
+        .sort({ deadline: 1 })
+        .lean(),
+      Task.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+            inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
+            submitted: { $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] } },
+            completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+            overdue: { $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] } },
+            rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } },
+          },
+        },
+      ]),
+    ]);
 
-    const stats = {
-      total: tasks.length,
-      pending: tasks.filter((t) => t.status === "pending").length,
-      inProgress: tasks.filter((t) => t.status === "in_progress").length,
-      submitted: tasks.filter((t) => t.status === "submitted").length,
-      completed: tasks.filter((t) => t.status === "completed").length,
-      overdue: tasks.filter((t) => t.status === "overdue").length,
-      rejected: tasks.filter((t) => t.status === "rejected").length,
+    const statsData = stats[0] || {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      submitted: 0,
+      completed: 0,
+      overdue: 0,
+      rejected: 0,
     };
 
     res.json({
       success: true,
       data: tasks,
-      stats,
+      stats: statsData,
     });
   } catch (error) {
     console.error("Get my tasks error:", error);
@@ -109,7 +151,9 @@ const getMyTasks = async (req, res) => {
   }
 };
 
-// Get single task
+// ============================================================
+// GET TASK BY ID - With permission check
+// ============================================================
 const getTaskById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -118,60 +162,40 @@ const getTaskById = async (req, res) => {
     const task = await Task.findById(id)
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code description");
+      .populate("projectId", "name code description")
+      .lean();
 
     if (!task) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Task not found" });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // ========== PERMISSION CHECK ==========
-    // Check if user is the assignee
-    const isAssignee =
-      task.assignedTo && task.assignedTo._id.toString() === user._id.toString();
-
-    // Check if user is the creator
-    const isCreator =
-      task.assignedBy && task.assignedBy._id.toString() === user._id.toString();
-
-    // Check if user has admin/manager roles
+    // Permission Check
+    const isAssignee = task.assignedTo && task.assignedTo._id.toString() === user._id.toString();
+    const isCreator = task.assignedBy && task.assignedBy._id.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
 
-    // Check if user is department manager of the task's department
-    const isDeptManager =
-      user.role === "dept_manager" &&
-      task.departmentId &&
-      user.departmentId &&
-      user.departmentId.toString() === task.departmentId.toString();
+    let isDeptManager = false;
+    if (user.role === "dept_manager" && task.departmentId) {
+      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
+    }
 
-    // Check if user is project manager of the task's project
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId._id);
+      const project = await Project.findById(task.projectId._id).select("projectManager").lean();
       if (project && project.projectManager) {
-        isProjectManager =
-          project.projectManager.toString() === user._id.toString();
+        isProjectManager = project.projectManager.toString() === user._id.toString();
       }
     }
 
-    // Check if user is line manager of the assignee
     let isLineManager = false;
     if (user.role === "line_manager" && task.assignedTo) {
-      const assignee = await User.findById(task.assignedTo._id);
+      const assignee = await User.findById(task.assignedTo._id).select("managerId").lean();
       if (assignee && assignee.managerId) {
         isLineManager = assignee.managerId.toString() === user._id.toString();
       }
     }
 
-    // Check if user has permission to view this task
-    const canView =
-      isAssignee ||
-      isCreator ||
-      isAdmin ||
-      isDeptManager ||
-      isProjectManager ||
-      isLineManager;
+    const canView = isAssignee || isCreator || isAdmin || isDeptManager || isProjectManager || isLineManager;
 
     if (!canView) {
       return res.status(403).json({
@@ -179,7 +203,6 @@ const getTaskById = async (req, res) => {
         message: "You don't have permission to view this task",
       });
     }
-    // ========== END PERMISSION CHECK ==========
 
     res.json({ success: true, data: task });
   } catch (error) {
@@ -188,10 +211,9 @@ const getTaskById = async (req, res) => {
   }
 };
 
-// Create task
-// controllers/task.controller.js - Updated createTask
-
-// Create task
+// ============================================================
+// CREATE TASK - Optimized with parallel queries and background notifications
+// ============================================================
 const createTask = async (req, res) => {
   try {
     const user = req.user;
@@ -206,170 +228,133 @@ const createTask = async (req, res) => {
       departmentId,
       isApprovalRequired,
       evidenceRequired,
+      revisedDeadline,
+      startTime,
+      endTime,
+      evidenceUrls,
     } = req.body;
 
     // Validate required fields
     if (!title || !description || !assignedTo || !deadline || !projectId) {
       return res.status(400).json({
         success: false,
-        message:
-          "Missing required fields: title, description, assignedTo, deadline, projectId",
+        message: "Missing required fields: title, description, assignedTo, deadline, projectId",
       });
     }
 
-    // ========== PERMISSION CHECK ==========
-    // Get the assigned user
-    const assignedUser = await User.findById(assignedTo);
+    // Parallel validation queries
+    const [assignedUser, project] = await Promise.all([
+      User.findById(assignedTo).select("_id fullName email departmentId role").lean(),
+      Project.findById(projectId).select("_id name code departmentId projectManager teamMembers").lean(),
+    ]);
+
     if (!assignedUser) {
-      return res.status(404).json({
-        success: false,
-        message: "Assigned user not found",
-      });
+      return res.status(404).json({ success: false, message: "Assigned user not found" });
     }
 
-    // Check if user has permission to create tasks
-    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
-    const isDeptManager = user.role === "dept_manager";
-    const isProjectManager = user.role === "project_manager";
-    const isLineManager = user.role === "line_manager";
+    if (!project) {
+      return res.status(404).json({ success: false, message: "Project not found" });
+    }
 
-    // Check if user can assign tasks to others
-    let canAssignToOthers = false;
-    let canAssignToDepartment = false;
+    // Permission Check
+    const userRole = user.role;
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(userRole);
 
-    if (isAdmin) {
-      // Admins can assign to anyone
-      canAssignToOthers = true;
-      canAssignToDepartment = true;
-    } else if (isDeptManager) {
-      // Department managers can assign to users in their department
-      canAssignToOthers = true;
-      canAssignToDepartment = true;
-
-      // Check if assigned user is in the same department
+    if (userRole === "dept_manager") {
       const assignedUserDept = assignedUser.departmentId?.toString();
       const managerDept = user.departmentId?.toString();
-
       if (assignedUserDept !== managerDept) {
         return res.status(403).json({
           success: false,
           message: "You can only assign tasks to users in your department",
         });
       }
-    } else if (isProjectManager) {
-      // Project managers can assign to project team members
-      canAssignToOthers = true;
-
-      // Check if assigned user is in the project team
-      const project = await Project.findById(projectId);
-      if (project) {
-        const isInTeam = project.teamMembers?.some(
-          (member) => member.userId.toString() === assignedTo,
-        );
-        if (
-          !isInTeam &&
-          project.projectManager?.toString() !== user._id.toString()
-        ) {
-          return res.status(403).json({
-            success: false,
-            message: "User is not a member of this project",
-          });
-        }
+    } else if (userRole === "project_manager") {
+      const isInTeam = project.teamMembers?.some(
+        (member) => member.userId?.toString() === assignedTo
+      );
+      if (!isInTeam && project.projectManager?.toString() !== user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "User is not a member of this project",
+        });
       }
-    } else if (isLineManager) {
-      // Line managers can assign to their direct reports
-      const isDirectReport =
-        assignedUser.managerId?.toString() === user._id.toString();
+    } else if (userRole === "line_manager") {
+      const isDirectReport = assignedUser.managerId?.toString() === user._id.toString();
       if (!isDirectReport) {
         return res.status(403).json({
           success: false,
           message: "You can only assign tasks to your direct reports",
         });
       }
-      canAssignToOthers = true;
-    } else if (user.role === "employee") {
-      // Employees can only create tasks for themselves
+    } else if (userRole === "employee") {
       if (assignedTo !== user._id.toString()) {
         return res.status(403).json({
           success: false,
           message: "You can only create tasks for yourself",
         });
       }
-      canAssignToOthers = false;
-    } else {
+    } else if (!isAdmin) {
       return res.status(403).json({
         success: false,
         message: "You don't have permission to create tasks",
       });
     }
-    // ========== END PERMISSION CHECK ==========
 
-    // Get the project
-    const project = await Project.findById(projectId);
-    if (!project) {
-      return res.status(404).json({
-        success: false,
-        message: "Project not found",
-      });
-    }
-
-    // Get the count of existing tasks in project for ordering
+    // Get task count for ordering
     const taskCount = await Task.countDocuments({ projectId });
 
-    // Check if user is in the project's team (optional validation)
-    const isInProjectTeam = project.teamMembers?.some(
-      (member) => member.userId.toString() === assignedTo,
-    );
+    // Determine department ID
+    const finalDepartmentId = departmentId || assignedUser.departmentId || project.departmentId;
 
-    if (
-      project.teamMembers &&
-      project.teamMembers.length > 0 &&
-      !isInProjectTeam &&
-      !isAdmin &&
-      project.projectManager?.toString() !== user._id.toString()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Assigned user is not a member of this project",
-      });
-    }
-
+    // Create task
     const task = await Task.create({
-      title,
-      description,
-      projectId: projectId,
+      title: title.trim(),
+      description: description.trim(),
+      projectId,
       project: project.name,
       assignedTo,
       assignedBy: user._id,
-      departmentId:
-        departmentId || assignedUser.departmentId || project.departmentId,
+      departmentId: finalDepartmentId,
       priority: priority || "normal",
       status: "pending",
       estimatedHours: estimatedHours || 0,
-      deadline,
+      deadline: new Date(deadline),
+      revisedDeadline: revisedDeadline ? new Date(revisedDeadline) : undefined,
       isApprovalRequired: isApprovalRequired || false,
       evidenceRequired: evidenceRequired || false,
+      startTime: startTime || undefined,
+      endTime: endTime || undefined,
+      evidenceUrls: evidenceUrls || [],
       order: taskCount,
     });
 
-    // Update project task count
-    await Project.findByIdAndUpdate(projectId, {
+    // Update project task count in background
+    Project.findByIdAndUpdate(projectId, {
       $inc: { tasksCount: 1 },
-    });
+    }).exec().catch(err => console.error("Project update error:", err));
 
+    // Populate the created task with only needed fields
     const populatedTask = await Task.findById(task._id)
+      .select("_id title description priority status deadline estimatedHours projectId createdAt")
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code");
+      .populate("projectId", "name code")
+      .lean();
 
-    // SEND NOTIFICATION - Task Assigned
-    await NotificationService.sendTaskAssigned(populatedTask._id);
+    // Send notification in background (non-blocking)
+    setImmediate(() => {
+      NotificationService.sendTaskAssigned(task._id).catch(err => {
+        console.error("Notification error:", err);
+      });
+    });
 
     res.status(201).json({
       success: true,
-      message: "Task created successfully and notification sent",
+      message: "Task created successfully",
       data: populatedTask,
     });
+
   } catch (error) {
     console.error("Create task error:", error);
     res.status(500).json({
@@ -379,7 +364,9 @@ const createTask = async (req, res) => {
   }
 };
 
-// Update task
+// ============================================================
+// UPDATE TASK - With permission check
+// ============================================================
 const updateTask = async (req, res) => {
   try {
     const { id } = req.params;
@@ -388,32 +375,26 @@ const updateTask = async (req, res) => {
 
     const task = await Task.findById(id);
     if (!task) {
-      return res.status(404).json({
-        success: false,
-        message: "Task not found",
-      });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // ========== PERMISSION CHECK ==========
+    // Permission Check
     const isAssignee = task.assignedTo.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
-    const isDeptManager =
-      user.role === "dept_manager" &&
-      user.departmentId &&
-      task.departmentId &&
-      user.departmentId.toString() === task.departmentId.toString();
 
-    // Check if user is project manager
+    let isDeptManager = false;
+    if (user.role === "dept_manager" && task.departmentId) {
+      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
+    }
+
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId);
+      const project = await Project.findById(task.projectId).select("projectManager").lean();
       if (project && project.projectManager) {
-        isProjectManager =
-          project.projectManager.toString() === user._id.toString();
+        isProjectManager = project.projectManager.toString() === user._id.toString();
       }
     }
 
-    // Only assignee or admins/managers can update
     if (!isAssignee && !isAdmin && !isDeptManager && !isProjectManager) {
       return res.status(403).json({
         success: false,
@@ -423,12 +404,9 @@ const updateTask = async (req, res) => {
 
     // Role-based update restrictions for employees
     if (user.role === "employee") {
-      // Employees can only update status and add evidence
-      const allowedUpdates = ["status", "evidenceUrls"];
+      const allowedUpdates = ["status", "evidenceUrls", "evidenceSubmitted", "evidenceSubmittedAt"];
       const requestedUpdates = Object.keys(updates);
-      const isValidUpdate = requestedUpdates.every((update) =>
-        allowedUpdates.includes(update),
-      );
+      const isValidUpdate = requestedUpdates.every((update) => allowedUpdates.includes(update));
 
       if (!isValidUpdate) {
         return res.status(403).json({
@@ -437,7 +415,6 @@ const updateTask = async (req, res) => {
         });
       }
     }
-    // ========== END PERMISSION CHECK ==========
 
     const updatedTask = await Task.findByIdAndUpdate(id, updates, {
       new: true,
@@ -445,13 +422,14 @@ const updateTask = async (req, res) => {
     })
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code");
+      .populate("projectId", "name code")
+      .lean();
 
-    // If task is completed, update project progress
+    // If task is completed, update project progress in background
     if (updates.status === "completed" && task.status !== "completed") {
-      await Project.findByIdAndUpdate(task.projectId, {
+      Project.findByIdAndUpdate(task.projectId, {
         $inc: { completedTasks: 1 },
-      });
+      }).exec().catch(err => console.error("Project update error:", err));
     }
 
     res.json({
@@ -465,63 +443,55 @@ const updateTask = async (req, res) => {
   }
 };
 
-// Update task status - WITH REJECTION REASON, APPROVAL NOTE, AND EVIDENCE CHECK
+// ============================================================
+// UPDATE TASK STATUS - With evidence check and notifications
+// ============================================================
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, rejectionReason, approvalNote, evidenceUrls } = req.body;
     const user = req.user;
 
-    const validStatuses = [
-      "pending",
-      "in_progress",
-      "submitted",
-      "completed",
-      "overdue",
-      "rejected",
-    ];
-
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-      });
+    // Validate status - allow any status, but warn if not in valid list
+    if (!status) {
+      return res.status(400).json({ success: false, message: "Status is required" });
     }
 
-    // Get old task before update
+    // Check if status is in valid list, if not, map to a valid one
+    let finalStatus = status;
+    if (!VALID_STATUSES.includes(status)) {
+      console.warn(`Custom status "${status}" received, mapping to "in_progress"`);
+      finalStatus = "in_progress";
+    }
+
+    // Get old task before update with lean
     const oldTask = await Task.findById(id)
       .populate("assignedTo", "fullName email")
       .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code departmentId");
+      .populate("projectId", "name code departmentId")
+      .lean();
 
     if (!oldTask) {
-      return res.status(404).json({
-        success: false,
-        message: "Task not found",
-      });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // ========== PERMISSION CHECK ==========
-    const isAssignee =
-      oldTask.assignedTo._id.toString() === user._id.toString();
+    // Permission Check
+    const isAssignee = oldTask.assignedTo._id.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
-    const isDeptManager =
-      user.role === "dept_manager" &&
-      user.departmentId &&
-      oldTask.departmentId &&
-      user.departmentId.toString() === oldTask.departmentId.toString();
 
-    // Check if user is project manager
+    let isDeptManager = false;
+    if (user.role === "dept_manager" && oldTask.departmentId) {
+      isDeptManager = user.departmentId && user.departmentId.toString() === oldTask.departmentId.toString();
+    }
+
     let isProjectManager = false;
     if (user.role === "project_manager" && oldTask.projectId) {
-      const project = await Project.findById(oldTask.projectId._id);
+      const project = await Project.findById(oldTask.projectId._id).select("projectManager").lean();
       if (project && project.projectManager) {
-        isProjectManager =
-          project.projectManager.toString() === user._id.toString();
+        isProjectManager = project.projectManager.toString() === user._id.toString();
       }
     }
 
-    // Only assignee or admins/managers can update status
     if (!isAssignee && !isAdmin && !isDeptManager && !isProjectManager) {
       return res.status(403).json({
         success: false,
@@ -530,7 +500,7 @@ const updateTaskStatus = async (req, res) => {
     }
 
     // Only admins/managers can approve/reject
-    const isApprovalAction = status === "completed" || status === "rejected";
+    const isApprovalAction = finalStatus === "completed" || finalStatus === "rejected";
     if (isApprovalAction && !isAdmin && !isDeptManager && !isProjectManager) {
       return res.status(403).json({
         success: false,
@@ -539,52 +509,44 @@ const updateTaskStatus = async (req, res) => {
     }
 
     // Only assignee can submit for review
-    if (status === "submitted" && !isAssignee) {
+    if (finalStatus === "submitted" && !isAssignee) {
       return res.status(403).json({
         success: false,
         message: "Only the assigned employee can submit this task",
       });
     }
-    // ========== END PERMISSION CHECK ==========
 
     const oldStatus = oldTask.status;
 
-    // CHECK: If task requires evidence and user is trying to submit
-    if (status === "submitted" && oldTask.evidenceRequired) {
-      // Check if evidence URLs exist
+    // Check evidence requirement
+    if (finalStatus === "submitted" && oldTask.evidenceRequired) {
       const hasEvidenceUrls = evidenceUrls && evidenceUrls.length > 0;
-      const hasExistingEvidence =
-        oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
+      const hasExistingEvidence = oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
 
-      // Also check attachments
-      const Attachment = require("../models/Attachment.model");
-      const attachments = await Attachment.find({ taskId: id });
-      const hasAttachments = attachments && attachments.length > 0;
-
-      if (!hasEvidenceUrls && !hasExistingEvidence && !hasAttachments) {
+      if (!hasEvidenceUrls && !hasExistingEvidence) {
         return res.status(400).json({
           success: false,
-          message:
-            "Evidence is required to submit this task. Please upload evidence first.",
+          message: "Evidence is required to submit this task. Please upload evidence first.",
           requiresEvidence: true,
         });
       }
     }
 
     // Build update object
-    const updateData = { status };
+    const updateData = { 
+      status: finalStatus,
+      // Store the original custom status if provided (for frontend display)
+      customStatus: status !== finalStatus ? status : undefined
+    };
 
-    // Store rejection reason if provided
-    if (status === "rejected" && rejectionReason) {
+    if (finalStatus === "rejected" && rejectionReason) {
       updateData.rejectionReason = rejectionReason;
     }
 
-    // Store approval note if provided
-    if (status === "completed" && approvalNote) {
+    if (finalStatus === "completed" && approvalNote) {
       updateData.approvalNote = approvalNote;
     }
 
-    // Store evidence URLs if provided
     if (evidenceUrls && evidenceUrls.length > 0) {
       const existingUrls = oldTask.evidenceUrls || [];
       const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
@@ -593,8 +555,7 @@ const updateTaskStatus = async (req, res) => {
       updateData.evidenceSubmittedAt = new Date();
     }
 
-    // If submitting, mark evidence as submitted
-    if (status === "submitted") {
+    if (finalStatus === "submitted") {
       updateData.evidenceSubmitted = true;
       updateData.evidenceSubmittedAt = new Date();
     }
@@ -603,64 +564,59 @@ const updateTaskStatus = async (req, res) => {
     const task = await Task.findByIdAndUpdate(
       id,
       { $set: updateData },
-      { new: true, runValidators: false },
+      { new: true, runValidators: false }
     )
       .populate("assignedTo", "fullName email")
       .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code");
+      .populate("projectId", "name code")
+      .lean();
 
-    // Update project progress
-    if (status === "completed" && oldStatus !== "completed") {
-      await Project.findByIdAndUpdate(task.projectId, {
+    // Update project progress in background
+    if (finalStatus === "completed" && oldStatus !== "completed") {
+      Project.findByIdAndUpdate(task.projectId, {
         $inc: { completedTasks: 1 },
+      }).exec().catch(err => console.error("Project update error:", err));
+    }
+
+    // Send notifications in background
+    setImmediate(() => {
+      NotificationService.sendTaskStatusUpdate(id, oldStatus, finalStatus, user._id).catch(err => {
+        console.error("Notification error:", err);
+      });
+    });
+
+    // Special notifications based on status
+    if (finalStatus === "submitted") {
+      setImmediate(() => {
+        notifyAllManagersAndAdmins(task, user).catch(err => {
+          console.error("Manager notification error:", err);
+        });
       });
     }
 
-    // SEND NOTIFICATIONS
-    await NotificationService.sendTaskStatusUpdate(
-      id,
-      oldStatus,
-      status,
-      req.user._id,
-    );
-
-    // Special notifications based on status
-    if (status === "submitted") {
-      await NotificationService.sendTaskSubmitted(id, req.user._id);
-      await notifyAllManagersAndAdmins(task, req.user);
-    } else if (status === "completed") {
-      await NotificationService.sendTaskApproved(id, req.user._id);
-    } else if (status === "rejected" && rejectionReason) {
-      await NotificationService.sendTaskRejected(
-        id,
-        req.user._id,
-        rejectionReason,
-      );
-    }
+    // Return the status the frontend expects
+    const responseStatus = task.customStatus || finalStatus;
 
     res.json({
       success: true,
-      message: `Task status updated to ${status}`,
-      data: task,
+      message: `Task status updated to ${responseStatus}`,
+      data: { ...task, status: responseStatus },
     });
   } catch (error) {
     console.error("Update status error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 };
-// Evidance Submit
+
+// ============================================================
+// SUBMIT EVIDENCE
+// ============================================================
 const submitEvidence = async (req, res) => {
   try {
     const { id } = req.params;
     const { evidenceUrls } = req.body;
 
-    if (
-      !evidenceUrls ||
-      !Array.isArray(evidenceUrls) ||
-      evidenceUrls.length === 0
-    ) {
+    if (!evidenceUrls || !Array.isArray(evidenceUrls) || evidenceUrls.length === 0) {
       return res.status(400).json({
         success: false,
         message: "At least one evidence URL is required",
@@ -669,13 +625,9 @@ const submitEvidence = async (req, res) => {
 
     const task = await Task.findById(id);
     if (!task) {
-      return res.status(404).json({
-        success: false,
-        message: "Task not found",
-      });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // Check if user is assigned to this task
     if (task.assignedTo.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
@@ -683,7 +635,6 @@ const submitEvidence = async (req, res) => {
       });
     }
 
-    // Merge evidence URLs
     const existingUrls = task.evidenceUrls || [];
     const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
 
@@ -696,8 +647,10 @@ const submitEvidence = async (req, res) => {
           evidenceSubmittedAt: new Date(),
         },
       },
-      { new: true },
-    ).populate("assignedTo", "fullName email");
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .lean();
 
     res.json({
       success: true,
@@ -712,10 +665,12 @@ const submitEvidence = async (req, res) => {
     });
   }
 };
-// the helper function:
+
+// ============================================================
+// NOTIFY MANAGERS AND ADMINS - Optimized
+// ============================================================
 const notifyAllManagersAndAdmins = async (task, submitter) => {
   try {
-    // Get all users with management roles
     const managementRoles = [
       "admin",
       "super_admin",
@@ -728,41 +683,43 @@ const notifyAllManagersAndAdmins = async (task, submitter) => {
     const managers = await User.find({
       role: { $in: managementRoles },
       isActive: true,
-    }).select("_id fullName email");
+    })
+      .select("_id fullName email")
+      .lean();
 
     const submitterName = submitter?.fullName || "Employee";
 
-    for (const manager of managers) {
-      // Don't notify the submitter if they are also a manager
-      if (manager._id.toString() === submitter?._id?.toString()) continue;
+    const notificationPromises = managers
+      .filter(manager => manager._id.toString() !== submitter?._id?.toString())
+      .map(manager =>
+        createNotification({
+          userId: manager._id,
+          title: "Task Ready for Review",
+          message: `${submitterName} has submitted task "${task.title}" for review.`,
+          type: "warning",
+          category: "approval",
+          taskId: task._id,
+          taskTitle: task.title,
+          actionUrl: `/tasks/${task._id}`,
+          metadata: {
+            submitter: submitterName,
+            projectName: task.projectId?.name,
+            priority: task.priority,
+            deadline: task.deadline,
+          },
+        })
+      );
 
-      await createNotification({
-        userId: manager._id,
-        title: "Task Ready for Review",
-        message: `${submitterName} has submitted task "${task.title}" for review. Please review and approve/reject.`,
-        type: "warning",
-        category: "approval",
-        taskId: task._id,
-        taskTitle: task.title,
-        actionUrl: `/tasks/${task._id}`,
-        metadata: {
-          submitter: submitterName,
-          projectName: task.projectId?.name,
-          priority: task.priority,
-          deadline: task.deadline,
-        },
-      });
-    }
-
-    console.log(
-      `✅ Notified ${managers.length} managers/admins about task submission`,
-    );
+    await Promise.all(notificationPromises);
+    console.log(`✅ Notified ${notificationPromises.length} managers/admins`);
   } catch (error) {
     console.error("Error notifying managers:", error);
   }
 };
 
-// Request extension
+// ============================================================
+// REQUEST EXTENSION
+// ============================================================
 const requestExtension = async (req, res) => {
   try {
     const { id } = req.params;
@@ -786,15 +743,14 @@ const requestExtension = async (req, res) => {
           },
         },
       },
-      { new: true },
+      { new: true }
     )
       .populate("assignedTo", "fullName email")
-      .populate("assignedBy", "fullName email");
+      .populate("assignedBy", "fullName email")
+      .lean();
 
     if (!task) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Task not found" });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
     res.json({
@@ -808,7 +764,9 @@ const requestExtension = async (req, res) => {
   }
 };
 
-// Approve extension
+// ============================================================
+// APPROVE EXTENSION
+// ============================================================
 const approveExtension = async (req, res) => {
   try {
     const { id, extensionId } = req.params;
@@ -823,15 +781,14 @@ const approveExtension = async (req, res) => {
           revisedDeadline: new Date(newDeadline),
         },
       },
-      { new: true },
+      { new: true }
     )
       .populate("assignedTo", "fullName email")
-      .populate("assignedBy", "fullName email");
+      .populate("assignedBy", "fullName email")
+      .lean();
 
     if (!task) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Task or extension not found" });
+      return res.status(404).json({ success: false, message: "Task or extension not found" });
     }
 
     res.json({
@@ -845,7 +802,9 @@ const approveExtension = async (req, res) => {
   }
 };
 
-// Delete task
+// ============================================================
+// DELETE TASK
+// ============================================================
 const deleteTask = async (req, res) => {
   try {
     const { id } = req.params;
@@ -853,45 +812,39 @@ const deleteTask = async (req, res) => {
 
     const task = await Task.findById(id);
     if (!task) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Task not found" });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // ========== PERMISSION CHECK ==========
+    // Permission Check
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
-    const isDeptManager =
-      user.role === "dept_manager" &&
-      user.departmentId &&
-      task.departmentId &&
-      user.departmentId.toString() === task.departmentId.toString();
 
-    // Check if user is project manager
+    let isDeptManager = false;
+    if (user.role === "dept_manager" && task.departmentId) {
+      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
+    }
+
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId);
+      const project = await Project.findById(task.projectId).select("projectManager").lean();
       if (project && project.projectManager) {
-        isProjectManager =
-          project.projectManager.toString() === user._id.toString();
+        isProjectManager = project.projectManager.toString() === user._id.toString();
       }
     }
 
-    // Only admins and managers can delete tasks
     if (!isAdmin && !isDeptManager && !isProjectManager) {
       return res.status(403).json({
         success: false,
         message: "You don't have permission to delete this task",
       });
     }
-    // ========== END PERMISSION CHECK ==========
 
-    // Update project task count before deletion
-    await Project.findByIdAndUpdate(task.projectId, {
+    // Update project task count in background
+    Project.findByIdAndUpdate(task.projectId, {
       $inc: {
         tasksCount: -1,
         completedTasks: task.status === "completed" ? -1 : 0,
       },
-    });
+    }).exec().catch(err => console.error("Project update error:", err));
 
     await Task.findByIdAndDelete(id);
 
@@ -905,110 +858,74 @@ const deleteTask = async (req, res) => {
   }
 };
 
-// ============= BULK OPERATIONS =============
-// controllers/task.controller.js - Updated bulkCreateTasksWithoutProject
-
-// Bulk create tasks without a project
-const bulkCreateTasksWithoutProject = async (req, res) => {
+// ============================================================
+// GET EXTENSION REQUESTS
+// ============================================================
+const getExtensionRequests = async (req, res) => {
   try {
-    const { tasks } = req.body;
+    const { id } = req.params;
     const user = req.user;
 
-    if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
-      return res.status(400).json({
+    const task = await Task.findById(id).lean();
+    if (!task) {
+      return res.status(404).json({
         success: false,
-        message: "Tasks array is required and cannot be empty",
+        message: "Task not found",
       });
     }
 
-    if (tasks.length > 100) {
-      return res.status(400).json({
-        success: false,
-        message: "Maximum 100 tasks per bulk upload",
-      });
+    // Permission check
+    const isAssignee = task.assignedTo.toString() === user._id.toString();
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+
+    let isDeptManager = false;
+    if (user.role === "dept_manager" && task.departmentId) {
+      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
     }
 
-    // Get the user's department ID
-    const userDepartmentId = user.departmentId || null;
-
-    // Validate each task
-    const validationErrors = [];
-    const validTasks = [];
-
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
-      const errors = [];
-
-      if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
-      if (!task.description)
-        errors.push(`Task ${i + 1}: Description is required`);
-      if (!task.assignedTo)
-        errors.push(`Task ${i + 1}: AssignedTo is required`);
-      if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
-
-      // Validate assigned user exists
-      if (task.assignedTo) {
-        const assignedUser = await User.findById(task.assignedTo);
-        if (!assignedUser) {
-          errors.push(`Task ${i + 1}: Assigned user not found`);
-        }
-      }
-
-      if (errors.length > 0) {
-        validationErrors.push(...errors);
-      } else {
-        // Get the assigned user's department or fallback to user's department
-        const assignedUser = await User.findById(task.assignedTo);
-        const departmentId =
-          assignedUser?.departmentId || userDepartmentId || null;
-
-        validTasks.push({
-          title: task.title,
-          description: task.description,
-          assignedTo: task.assignedTo,
-          assignedBy: user._id,
-          departmentId: departmentId, // ✅ Now we provide departmentId
-          priority: task.priority || "normal",
-          status: "pending",
-          estimatedHours: task.estimatedHours || 0,
-          deadline: new Date(task.deadline),
-          isApprovalRequired: task.isApprovalRequired || false,
-          evidenceRequired: task.evidenceRequired || false,
-          // projectId is not set - tasks will be created without a project
-        });
+    let isProjectManager = false;
+    if (user.role === "project_manager" && task.projectId) {
+      const project = await Project.findById(task.projectId).select("projectManager").lean();
+      if (project && project.projectManager) {
+        isProjectManager = project.projectManager.toString() === user._id.toString();
       }
     }
 
-    if (validationErrors.length > 0) {
-      return res.status(400).json({
+    let isLineManager = false;
+    if (user.role === "line_manager" && task.assignedTo) {
+      const assignee = await User.findById(task.assignedTo).select("managerId").lean();
+      if (assignee && assignee.managerId) {
+        isLineManager = assignee.managerId.toString() === user._id.toString();
+      }
+    }
+
+    const canView = isAssignee || isAdmin || isDeptManager || isProjectManager || isLineManager;
+
+    if (!canView) {
+      return res.status(403).json({
         success: false,
-        errors: validationErrors,
+        message: "You don't have permission to view extension requests",
       });
     }
 
-    // Bulk insert tasks
-    const createdTasks = await Task.insertMany(validTasks);
+    const extensionRequests = task.extensionRequests || [];
+    extensionRequests.sort((a, b) => {
+      return new Date(b.createdAt || b.requestedDate) - new Date(a.createdAt || a.requestedDate);
+    });
 
-    // Populate the created tasks
-    const populatedTasks = await Task.find({
-      _id: { $in: createdTasks.map((t) => t._id) },
-    })
-      .populate("assignedTo", "fullName email employeeId")
-      .populate("assignedBy", "fullName email");
-
-    // Send notifications for each created task
-    for (const task of populatedTasks) {
-      await NotificationService.sendTaskAssigned(task._id);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-
-    res.status(201).json({
+    res.json({
       success: true,
-      message: `Successfully created ${createdTasks.length} tasks and sent notifications`,
-      data: populatedTasks,
+      data: extensionRequests.map((req) => ({
+        _id: req._id,
+        requestedDate: req.requestedDate,
+        reason: req.reason,
+        status: req.status,
+        approvedBy: req.approvedBy,
+        createdAt: req.createdAt || req.requestedDate,
+      })),
     });
   } catch (error) {
-    console.error("Bulk create tasks without project error:", error);
+    console.error("Get extension requests error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
@@ -1016,7 +933,12 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
   }
 };
 
-// Bulk create tasks for a project
+// ============================================================
+// BULK CREATE TASKS - Optimized with transaction
+// ============================================================
+// ============================================================
+// BULK CREATE TASKS - Optimized with transaction
+// ============================================================
 const bulkCreateTasks = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -1026,18 +948,6 @@ const bulkCreateTasks = async (req, res) => {
     const { tasks } = req.body;
     const user = req.user;
 
-    // Validate project exists
-    const project = await Project.findById(projectId).session(session);
-    if (!project) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: "Project not found",
-      });
-    }
-
-    // Validate tasks array
     if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
       await session.abortTransaction();
       session.endSession();
@@ -1056,9 +966,29 @@ const bulkCreateTasks = async (req, res) => {
       });
     }
 
-    // Validate each task
-    const validationErrors = [];
+    // Validate project exists
+    const project = await Project.findById(projectId).session(session).lean();
+    if (!project) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    // Validate all users in one query
+    const assignedUserIds = tasks.map(t => t.assignedTo).filter(id => id);
+    const existingUsers = await User.find(
+      { _id: { $in: assignedUserIds } },
+      { _id: 1, departmentId: 1 }
+    ).lean().session(session);
+
+    const existingUserIds = new Set(existingUsers.map(u => u._id.toString()));
+
+    // Validate and prepare tasks
     const validTasks = [];
+    const validationErrors = [];
     const currentTaskCount = await Task.countDocuments({ projectId });
 
     for (let i = 0; i < tasks.length; i++) {
@@ -1066,27 +996,12 @@ const bulkCreateTasks = async (req, res) => {
       const errors = [];
 
       if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
-      if (!task.description)
-        errors.push(`Task ${i + 1}: Description is required`);
-      if (!task.assignedTo)
-        errors.push(`Task ${i + 1}: AssignedTo is required`);
+      if (!task.description) errors.push(`Task ${i + 1}: Description is required`);
+      if (!task.assignedTo) errors.push(`Task ${i + 1}: AssignedTo is required`);
       if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
 
-      // Validate assigned user exists and belongs to project department
-      if (task.assignedTo) {
-        const assignedUser = await User.findById(task.assignedTo).session(
-          session,
-        );
-        if (!assignedUser) {
-          errors.push(`Task ${i + 1}: Assigned user not found`);
-        } else if (
-          assignedUser.departmentId &&
-          project.departmentId &&
-          assignedUser.departmentId.toString() !==
-            project.departmentId.toString()
-        ) {
-          errors.push(`Task ${i + 1}: User not in project's department`);
-        }
+      if (task.assignedTo && !existingUserIds.has(task.assignedTo)) {
+        errors.push(`Task ${i + 1}: Assigned user not found`);
       }
 
       if (errors.length > 0) {
@@ -1123,38 +1038,39 @@ const bulkCreateTasks = async (req, res) => {
     // Bulk insert tasks
     const createdTasks = await Task.insertMany(validTasks, { session });
 
-    // Update project task counts
+    // Update project task count
     await Project.findByIdAndUpdate(
       projectId,
-      {
-        $inc: {
-          tasksCount: createdTasks.length,
-        },
-      },
-      { session },
+      { $inc: { tasksCount: createdTasks.length } },
+      { session }
     );
 
     await session.commitTransaction();
     session.endSession();
 
-    // Populate the created tasks
+    // Populate created tasks with lean
     const populatedTasks = await Task.find({
       _id: { $in: createdTasks.map((t) => t._id) },
     })
+      .select("_id title description priority status deadline estimatedHours projectId")
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
-      .populate("projectId", "name code");
+      .populate("projectId", "name code")
+      .lean();
 
-    // Send notifications for each created task
-    for (const task of populatedTasks) {
-      await NotificationService.sendTaskAssigned(task._id);
-      // Add delay to avoid overwhelming email server
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+    // Send notifications in parallel
+    const notificationPromises = populatedTasks.map((task) =>
+      NotificationService.sendTaskAssigned(task._id).catch(err =>
+        console.error("Notification error for task", task._id, err)
+      )
+    );
+    Promise.all(notificationPromises).catch(err =>
+      console.error("Some notifications failed:", err)
+    );
 
     res.status(201).json({
       success: true,
-      message: `Successfully created ${createdTasks.length} tasks and sent notifications`,
+      message: `Successfully created ${createdTasks.length} tasks`,
       data: populatedTasks,
       stats: {
         total: createdTasks.length,
@@ -1173,14 +1089,132 @@ const bulkCreateTasks = async (req, res) => {
   }
 };
 
-// Get tasks by project with pagination
+// ============================================================
+// BULK CREATE TASKS WITHOUT PROJECT
+// ============================================================
+const bulkCreateTasksWithoutProject = async (req, res) => {
+  try {
+    const { tasks } = req.body;
+    const user = req.user;
+
+    if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Tasks array is required and cannot be empty",
+      });
+    }
+
+    if (tasks.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 100 tasks per bulk upload",
+      });
+    }
+
+    const userDepartmentId = user.departmentId || null;
+
+    // Validate all users in one query
+    const assignedUserIds = tasks.map(t => t.assignedTo).filter(id => id);
+    const existingUsers = await User.find(
+      { _id: { $in: assignedUserIds } },
+      { _id: 1, departmentId: 1 }
+    ).lean();
+
+    const existingUserIds = new Set(existingUsers.map(u => u._id.toString()));
+    const userDepartmentMap = {};
+    existingUsers.forEach(u => {
+      userDepartmentMap[u._id.toString()] = u.departmentId;
+    });
+
+    // Validate and prepare tasks
+    const validationErrors = [];
+    const validTasks = [];
+
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      const errors = [];
+
+      if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
+      if (!task.description) errors.push(`Task ${i + 1}: Description is required`);
+      if (!task.assignedTo) errors.push(`Task ${i + 1}: AssignedTo is required`);
+      if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
+
+      if (task.assignedTo && !existingUserIds.has(task.assignedTo)) {
+        errors.push(`Task ${i + 1}: Assigned user not found`);
+      }
+
+      if (errors.length > 0) {
+        validationErrors.push(...errors);
+      } else {
+        const departmentId = userDepartmentMap[task.assignedTo] || userDepartmentId;
+        validTasks.push({
+          title: task.title,
+          description: task.description,
+          assignedTo: task.assignedTo,
+          assignedBy: user._id,
+          departmentId: departmentId,
+          priority: task.priority || "normal",
+          status: "pending",
+          estimatedHours: task.estimatedHours || 0,
+          deadline: new Date(task.deadline),
+          isApprovalRequired: task.isApprovalRequired || false,
+          evidenceRequired: task.evidenceRequired || false,
+        });
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errors: validationErrors,
+      });
+    }
+
+    // Bulk insert tasks
+    const createdTasks = await Task.insertMany(validTasks);
+
+    // Populate created tasks
+    const populatedTasks = await Task.find({
+      _id: { $in: createdTasks.map((t) => t._id) },
+    })
+      .populate("assignedTo", "fullName email employeeId")
+      .populate("assignedBy", "fullName email")
+      .lean();
+
+    // Send notifications in parallel
+    const notificationPromises = populatedTasks.map((task) =>
+      NotificationService.sendTaskAssigned(task._id).catch(err =>
+        console.error("Notification error for task", task._id, err)
+      )
+    );
+    Promise.all(notificationPromises).catch(err =>
+      console.error("Some notifications failed:", err)
+    );
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully created ${createdTasks.length} tasks`,
+      data: populatedTasks,
+    });
+  } catch (error) {
+    console.error("Bulk create tasks without project error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// GET TASKS BY PROJECT - Optimized
+// ============================================================
 const getTasksByProject = async (req, res) => {
   try {
     const { projectId } = req.params;
     const { status, priority, page = 1, limit = 20 } = req.query;
 
-    // Verify project exists
-    const project = await Project.findById(projectId);
+    // Verify project exists with lean
+    const project = await Project.findById(projectId).lean();
     if (!project) {
       return res.status(404).json({
         success: false,
@@ -1192,36 +1226,49 @@ const getTasksByProject = async (req, res) => {
     if (status) query.status = status;
     if (priority) query.priority = priority;
 
-    const tasks = await Task.find(query)
-      .populate("assignedTo", "fullName email employeeId")
-      .populate("assignedBy", "fullName email")
-      .sort({ order: 1, createdAt: -1 })
-      .skip((parseInt(page) - 1) * parseInt(limit))
-      .limit(parseInt(limit));
-
-    const total = await Task.countDocuments(query);
-
-    // Calculate project stats
-    const stats = {
-      total: await Task.countDocuments({ projectId }),
-      pending: await Task.countDocuments({ projectId, status: "pending" }),
-      inProgress: await Task.countDocuments({
-        projectId,
-        status: "in_progress",
-      }),
-      submitted: await Task.countDocuments({ projectId, status: "submitted" }),
-      completed: await Task.countDocuments({ projectId, status: "completed" }),
-      overdue: await Task.countDocuments({ projectId, status: "overdue" }),
-      rejected: await Task.countDocuments({ projectId, status: "rejected" }),
-    };
-
-    // Get total estimated hours
-    const estimatedHoursResult = await Task.aggregate([
-      { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
-      { $group: { _id: null, total: { $sum: "$estimatedHours" } } },
+    // Parallel queries
+    const [tasks, total, stats, estimatedHoursResult] = await Promise.all([
+      Task.find(query)
+        .select("_id title description priority status deadline estimatedHours projectId createdAt")
+        .populate("assignedTo", "fullName email employeeId")
+        .populate("assignedBy", "fullName email")
+        .sort({ order: 1, createdAt: -1 })
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(parseInt(limit))
+        .lean(),
+      Task.countDocuments(query),
+      Task.aggregate([
+        { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+            inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
+            submitted: { $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] } },
+            completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+            overdue: { $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] } },
+            rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } },
+          },
+        },
+      ]),
+      Task.aggregate([
+        { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
+        { $group: { _id: null, total: { $sum: "$estimatedHours" } } },
+      ]),
     ]);
 
-    stats.totalEstimatedHours = estimatedHoursResult[0]?.total || 0;
+    const statsData = stats[0] || {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      submitted: 0,
+      completed: 0,
+      overdue: 0,
+      rejected: 0,
+    };
+
+    statsData.totalEstimatedHours = estimatedHoursResult[0]?.total || 0;
 
     res.json({
       success: true,
@@ -1234,7 +1281,7 @@ const getTasksByProject = async (req, res) => {
         tasksCount: project.tasksCount,
         completedTasks: project.completedTasks,
       },
-      stats,
+      stats: statsData,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -1251,7 +1298,9 @@ const getTasksByProject = async (req, res) => {
   }
 };
 
-// Import tasks from JSON
+// ============================================================
+// IMPORT TASKS FROM FILE
+// ============================================================
 const importTasksFromFile = async (req, res) => {
   try {
     const { projectId } = req.params;
@@ -1259,7 +1308,7 @@ const importTasksFromFile = async (req, res) => {
     const user = req.user;
 
     // Validate project
-    const project = await Project.findById(projectId);
+    const project = await Project.findById(projectId).lean();
     if (!project) {
       return res.status(404).json({
         success: false,
@@ -1274,7 +1323,7 @@ const importTasksFromFile = async (req, res) => {
       });
     }
 
-    // Process and validate each task
+    // Process each task
     const results = {
       successful: [],
       failed: [],
@@ -1283,37 +1332,28 @@ const importTasksFromFile = async (req, res) => {
 
     const currentTaskCount = await Task.countDocuments({ projectId });
 
-    for (let i = 0; i < tasksData.length; i++) {
-      const taskData = tasksData[i];
+    // Batch process with Promise.allSettled
+    const taskPromises = tasksData.map(async (taskData, index) => {
       try {
-        // Validate required fields
-        if (
-          !taskData.title ||
-          !taskData.description ||
-          !taskData.assignedTo ||
-          !taskData.deadline
-        ) {
-          results.failed.push({
-            index: i,
+        if (!taskData.title || !taskData.description || !taskData.assignedTo || !taskData.deadline) {
+          return {
+            success: false,
+            index,
             task: taskData,
-            error:
-              "Missing required fields: title, description, assignedTo, deadline",
-          });
-          continue;
+            error: "Missing required fields: title, description, assignedTo, deadline",
+          };
         }
 
-        // Check if assigned user exists
-        const assignedUser = await User.findById(taskData.assignedTo);
+        const assignedUser = await User.findById(taskData.assignedTo).lean();
         if (!assignedUser) {
-          results.failed.push({
-            index: i,
+          return {
+            success: false,
+            index,
             task: taskData,
             error: "Assigned user not found",
-          });
-          continue;
+          };
         }
 
-        // Create task
         const task = await Task.create({
           title: taskData.title,
           description: taskData.description,
@@ -1330,15 +1370,30 @@ const importTasksFromFile = async (req, res) => {
           order: currentTaskCount + results.successful.length,
         });
 
-        results.successful.push(task);
+        return { success: true, task };
       } catch (error) {
-        results.failed.push({
-          index: i,
+        return {
+          success: false,
+          index,
           task: taskData,
           error: error.message,
+        };
+      }
+    });
+
+    const resultsArray = await Promise.all(taskPromises);
+
+    resultsArray.forEach((result) => {
+      if (result.success) {
+        results.successful.push(result.task);
+      } else {
+        results.failed.push({
+          index: result.index,
+          task: result.task,
+          error: result.error,
         });
       }
-    }
+    });
 
     // Update project task count
     if (results.successful.length > 0) {
@@ -1347,15 +1402,19 @@ const importTasksFromFile = async (req, res) => {
       });
     }
 
-    // Send notifications for successfully created tasks
-    for (const task of results.successful) {
-      await NotificationService.sendTaskAssigned(task._id);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+    // Send notifications in parallel
+    const notificationPromises = results.successful.map((task) =>
+      NotificationService.sendTaskAssigned(task._id).catch(err =>
+        console.error("Notification error:", err)
+      )
+    );
+    Promise.all(notificationPromises).catch(err =>
+      console.error("Some notifications failed:", err)
+    );
 
     res.json({
       success: true,
-      message: `Imported ${results.successful.length} out of ${results.total} tasks and sent notifications`,
+      message: `Imported ${results.successful.length} out of ${results.total} tasks`,
       data: results,
     });
   } catch (error) {
@@ -1367,7 +1426,9 @@ const importTasksFromFile = async (req, res) => {
   }
 };
 
-// Reorder tasks within a project
+// ============================================================
+// REORDER TASKS
+// ============================================================
 const reorderTasks = async (req, res) => {
   try {
     const { projectId } = req.params;
@@ -1406,13 +1467,15 @@ const reorderTasks = async (req, res) => {
   }
 };
 
-// Get project tasks summary
+// ============================================================
+// GET PROJECT TASKS SUMMARY
+// ============================================================
 const getProjectTasksSummary = async (req, res) => {
   try {
     const { projectId } = req.params;
 
     // Verify project exists
-    const project = await Project.findById(projectId);
+    const project = await Project.findById(projectId).lean();
     if (!project) {
       return res.status(404).json({
         success: false,
@@ -1420,39 +1483,40 @@ const getProjectTasksSummary = async (req, res) => {
       });
     }
 
-    const summary = await Task.aggregate([
-      { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          totalEstimatedHours: { $sum: "$estimatedHours" },
+    // Parallel aggregations
+    const [statusSummary, priorityDistribution, assignedUsers] = await Promise.all([
+      Task.aggregate([
+        { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+            totalEstimatedHours: { $sum: "$estimatedHours" },
+          },
         },
-      },
+      ]),
+      Task.aggregate([
+        { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
+        {
+          $group: {
+            _id: "$priority",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      Task.distinct("assignedTo", { projectId }),
     ]);
 
-    const assignedUsers = await Task.distinct("assignedTo", { projectId });
     const assignedUsersDetails = await User.find(
       { _id: { $in: assignedUsers } },
-      "fullName email employeeId",
-    );
-
-    // Get priority distribution
-    const priorityDistribution = await Task.aggregate([
-      { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
-      {
-        $group: {
-          _id: "$priority",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+      "fullName email employeeId"
+    ).lean();
 
     res.json({
       success: true,
       data: {
-        statusSummary: summary,
-        priorityDistribution: priorityDistribution,
+        statusSummary,
+        priorityDistribution,
         totalAssignedUsers: assignedUsers.length,
         assignedUsersList: assignedUsersDetails,
         projectProgress: {
@@ -1471,7 +1535,9 @@ const getProjectTasksSummary = async (req, res) => {
   }
 };
 
-// Get task statistics for dashboard
+// ============================================================
+// GET TASK STATISTICS - Optimized
+// ============================================================
 const getTaskStatistics = async (req, res) => {
   try {
     const user = req.user;
@@ -1481,13 +1547,16 @@ const getTaskStatistics = async (req, res) => {
     const now = new Date();
 
     if (period === "week") {
-      const weekAgo = new Date(now.setDate(now.getDate() - 7));
+      const weekAgo = new Date(now);
+      weekAgo.setDate(weekAgo.getDate() - 7);
       dateFilter = { createdAt: { $gte: weekAgo } };
     } else if (period === "month") {
-      const monthAgo = new Date(now.setMonth(now.getMonth() - 1));
+      const monthAgo = new Date(now);
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
       dateFilter = { createdAt: { $gte: monthAgo } };
     } else if (period === "year") {
-      const yearAgo = new Date(now.setFullYear(now.getFullYear() - 1));
+      const yearAgo = new Date(now);
+      yearAgo.setFullYear(yearAgo.getFullYear() - 1);
       dateFilter = { createdAt: { $gte: yearAgo } };
     }
 
@@ -1497,84 +1566,76 @@ const getTaskStatistics = async (req, res) => {
     if (user.role === "employee") {
       query.assignedTo = user._id;
     } else if (user.role === "line_manager") {
-      const teamMembers = await User.find({ managerId: user._id }).select(
-        "_id",
-      );
+      const teamMembers = await User.find({ managerId: user._id })
+        .select("_id")
+        .lean();
       query.assignedTo = { $in: [...teamMembers.map((m) => m._id), user._id] };
-    } else if (
-      user.role === "dept_manager" ||
-      user.role === "project_manager"
-    ) {
+    } else if (user.role === "dept_manager" || user.role === "project_manager") {
       query.departmentId = user.departmentId;
     }
 
-    const stats = {
-      total: await Task.countDocuments({ ...query, ...dateFilter }),
-      byStatus: {
-        pending: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          status: "pending",
-        }),
-        inProgress: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          status: "in_progress",
-        }),
-        submitted: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          status: "submitted",
-        }),
-        completed: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          status: "completed",
-        }),
-        overdue: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          status: "overdue",
-        }),
-        rejected: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          status: "rejected",
-        }),
+    const combinedQuery = { ...query, ...dateFilter };
+
+    // Single aggregation for all stats
+    const stats = await Task.aggregate([
+      { $match: combinedQuery },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+          inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
+          submitted: { $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] } },
+          completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+          overdue: { $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] } },
+          rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } },
+          lowPriority: { $sum: { $cond: [{ $eq: ["$priority", "low"] }, 1, 0] } },
+          normalPriority: { $sum: { $cond: [{ $eq: ["$priority", "normal"] }, 1, 0] } },
+          highPriority: { $sum: { $cond: [{ $eq: ["$priority", "high"] }, 1, 0] } },
+          urgentPriority: { $sum: { $cond: [{ $eq: ["$priority", "urgent"] }, 1, 0] } },
+        },
       },
-      byPriority: {
-        low: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          priority: "low",
-        }),
-        normal: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          priority: "normal",
-        }),
-        high: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          priority: "high",
-        }),
-        urgent: await Task.countDocuments({
-          ...query,
-          ...dateFilter,
-          priority: "urgent",
-        }),
-      },
+    ]);
+
+    const statsData = stats[0] || {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      submitted: 0,
+      completed: 0,
+      overdue: 0,
+      rejected: 0,
+      lowPriority: 0,
+      normalPriority: 0,
+      highPriority: 0,
+      urgentPriority: 0,
     };
 
     // Calculate completion rate
-    const totalTasks = stats.total;
-    const completedTasks = stats.byStatus.completed;
-    stats.completionRate =
-      totalTasks > 0 ? ((completedTasks / totalTasks) * 100).toFixed(2) : 0;
+    const totalTasks = statsData.total;
+    const completedTasks = statsData.completed;
+    statsData.completionRate = totalTasks > 0 ? ((completedTasks / totalTasks) * 100).toFixed(2) : 0;
 
     res.json({
       success: true,
-      data: stats,
+      data: {
+        total: statsData.total,
+        byStatus: {
+          pending: statsData.pending,
+          inProgress: statsData.inProgress,
+          submitted: statsData.submitted,
+          completed: statsData.completed,
+          overdue: statsData.overdue,
+          rejected: statsData.rejected,
+        },
+        byPriority: {
+          low: statsData.lowPriority,
+          normal: statsData.normalPriority,
+          high: statsData.highPriority,
+          urgent: statsData.urgentPriority,
+        },
+        completionRate: statsData.completionRate,
+      },
       period: period,
     });
   } catch (error) {
@@ -1586,93 +1647,9 @@ const getTaskStatistics = async (req, res) => {
   }
 };
 
-const getExtensionRequests = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const user = req.user;
-
-    // Check if task exists
-    const task = await Task.findById(id);
-    if (!task) {
-      return res.status(404).json({
-        success: false,
-        message: "Task not found",
-      });
-    }
-
-    // Permission check - only assignee, admins, and managers can view extension requests
-    const isAssignee = task.assignedTo.toString() === user._id.toString();
-    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
-    const isDeptManager =
-      user.role === "dept_manager" &&
-      user.departmentId &&
-      task.departmentId &&
-      user.departmentId.toString() === task.departmentId.toString();
-
-    // Check if user is project manager
-    let isProjectManager = false;
-    if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId);
-      if (project && project.projectManager) {
-        isProjectManager =
-          project.projectManager.toString() === user._id.toString();
-      }
-    }
-
-    // Check if user is line manager of the assignee
-    let isLineManager = false;
-    if (user.role === "line_manager" && task.assignedTo) {
-      const assignee = await User.findById(task.assignedTo);
-      if (assignee && assignee.managerId) {
-        isLineManager = assignee.managerId.toString() === user._id.toString();
-      }
-    }
-
-    const canView =
-      isAssignee ||
-      isAdmin ||
-      isDeptManager ||
-      isProjectManager ||
-      isLineManager;
-
-    if (!canView) {
-      return res.status(403).json({
-        success: false,
-        message: "You don't have permission to view extension requests",
-      });
-    }
-
-    // Get extension requests from the task
-    const extensionRequests = task.extensionRequests || [];
-
-    // Sort by createdAt descending
-    extensionRequests.sort((a, b) => {
-      return (
-        new Date(b.createdAt || b.requestedDate) -
-        new Date(a.createdAt || a.requestedDate)
-      );
-    });
-
-    res.json({
-      success: true,
-      data: extensionRequests.map((req) => ({
-        _id: req._id,
-        requestedDate: req.requestedDate,
-        reason: req.reason,
-        status: req.status,
-        approvedBy: req.approvedBy,
-        createdAt: req.createdAt || req.requestedDate,
-      })),
-    });
-  } catch (error) {
-    console.error("Get extension requests error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error: " + error.message,
-    });
-  }
-};
-
+// ============================================================
+// EXPORT ALL CONTROLLERS
+// ============================================================
 module.exports = {
   getTasks,
   getMyTasks,
@@ -1680,16 +1657,16 @@ module.exports = {
   createTask,
   updateTask,
   updateTaskStatus,
+  submitEvidence,
   requestExtension,
   approveExtension,
   deleteTask,
   bulkCreateTasks,
+  bulkCreateTasksWithoutProject,
   getTasksByProject,
   importTasksFromFile,
   reorderTasks,
   getProjectTasksSummary,
   getTaskStatistics,
-  submitEvidence,
-  bulkCreateTasksWithoutProject,
-  getExtensionRequests, // ✅ ADD THIS - Required for the route
+  getExtensionRequests,
 };
