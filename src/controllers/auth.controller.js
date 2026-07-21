@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../models/User.model");
 const { Project } = require("../models/Project.model");
+const { Role } = require("../models/Role.model");
 const crypto = require("crypto");
 const { sendEmail } = require("../config/email.config");
 const EmailTemplates = require("../services/emailTemplates.service");
@@ -30,7 +31,8 @@ const getActiveUsers = async (req, res) => {
   try {
     const users = await User.find({ isActive: true })
       .select("-password")
-      .populate("departmentId", "name code")
+      .populate("department", "name code") // Fixed: department instead of departmentId
+      .populate("roles", "name code level") // Added: populate roles
       .sort({ role: 1, fullName: 1 });
 
     const formattedUsers = users.map((user) => ({
@@ -40,7 +42,8 @@ const getActiveUsers = async (req, res) => {
       email: user.email,
       role: user.role,
       employeeId: user.employeeId,
-      departmentId: user.departmentId,
+      department: user.department, // Fixed: department instead of departmentId
+      roles: user.roles || [],
       isActive: user.isActive,
       badge:
         user.role === "super_admin"
@@ -65,7 +68,9 @@ const getActiveUsers = async (req, res) => {
     });
   } catch (error) {
     console.error("Get active users error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error: " + error.message });
   }
 };
 
@@ -83,9 +88,10 @@ const login = async (req, res) => {
     }
 
     // Find user with password field
-    const user = await User.findOne({ email })
+    const user = await User.findOne({ email: email.toLowerCase() })
       .select("+password")
-      .populate("departmentId", "name code");
+      .populate("department", "name code") // Fixed: department instead of departmentId
+      .populate("roles", "name code level"); // Added: populate roles
 
     if (!user) {
       return res.status(401).json({
@@ -156,7 +162,9 @@ const refreshToken = async (req, res) => {
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId);
+      const user = await User.findById(decoded.userId)
+        .populate("department", "name code")
+        .populate("roles", "name code level");
 
       if (!user || !user.isActive) {
         return res.status(401).json({
@@ -203,9 +211,6 @@ const logout = async (req, res) => {
 };
 
 // ============ GET ALL USERS (Admin only) ============
-// controllers/auth.controller.js - Updated getAllUsers
-
-// Get all users (with role-based filtering)
 const getAllUsers = async (req, res) => {
   try {
     const user = req.user;
@@ -221,8 +226,8 @@ const getAllUsers = async (req, res) => {
       // No additional filtering needed
     } else if (user.role === "dept_manager") {
       // Department managers can only see users in their department
-      if (user.departmentId) {
-        query.departmentId = user.departmentId;
+      if (user.department) {
+        query.department = user.department;
       } else {
         // If department manager has no department, return empty
         return res.json({
@@ -285,12 +290,12 @@ const getAllUsers = async (req, res) => {
 
     // Allow additional filtering by department
     if (
-      req.query.departmentId &&
+      req.query.department &&
       (user.role === "super_admin" ||
         user.role === "admin" ||
         user.role === "hr_manager")
     ) {
-      query.departmentId = req.query.departmentId;
+      query.department = req.query.department;
     }
 
     // Allow filtering by role (admins only)
@@ -320,8 +325,9 @@ const getAllUsers = async (req, res) => {
 
     const users = await User.find(query)
       .select("-password")
-      .populate("departmentId", "name code")
-      .populate("managerId", "fullName email")
+      .populate("department", "name code") // Fixed: department instead of departmentId
+      .populate("roles", "name code level") // Added: populate roles
+      .populate("employment.manager", "fullName email") // Fixed: employment.manager
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -352,7 +358,8 @@ const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
       .select("-password")
-      .populate("departmentId", "name code");
+      .populate("department", "name code") // Fixed: department instead of departmentId
+      .populate("roles", "name code level"); // Added: populate roles
 
     if (!user) {
       return res.status(404).json({
@@ -374,7 +381,7 @@ const getMe = async (req, res) => {
   }
 };
 
-// ============ REGISTER NEW USER (Admin only) - UPDATED ============
+// ============ REGISTER NEW USER (Admin only) ============
 const register = async (req, res) => {
   try {
     const {
@@ -383,7 +390,7 @@ const register = async (req, res) => {
       password,
       employeeId,
       role,
-      departmentId,
+      department,
       phoneNumber,
     } = req.body;
 
@@ -397,7 +404,7 @@ const register = async (req, res) => {
 
     // Check if user exists
     const existingUser = await User.findOne({
-      $or: [{ email }, { employeeId }],
+      $or: [{ email: email.toLowerCase() }, { employeeId }],
     });
 
     if (existingUser) {
@@ -408,6 +415,24 @@ const register = async (req, res) => {
             ? "User with this email already exists"
             : "Employee ID already exists",
       });
+    }
+
+    // Get default role if not provided
+    let userRole = role || "employee";
+    let roleId = null;
+
+    // If role is provided, find the role document
+    if (role) {
+      const roleDoc = await Role.findOne({ code: role.toUpperCase() });
+      if (roleDoc) {
+        roleId = roleDoc._id;
+      }
+    } else {
+      // Get default employee role
+      const defaultRole = await Role.findOne({ code: "EMPLOYEE" });
+      if (defaultRole) {
+        roleId = defaultRole._id;
+      }
     }
 
     // Hash password
@@ -422,17 +447,18 @@ const register = async (req, res) => {
       email: email.toLowerCase(),
       password: hashedPassword,
       employeeId: finalEmployeeId,
-      role: role || "employee",
-      departmentId: departmentId || null,
+      role: userRole,
+      roles: roleId ? [roleId] : [],
+      department: department || null,
       phoneNumber: phoneNumber || null,
       isActive: true,
       firstLogin: true,
     });
 
     // ========== UPDATE DEPARTMENT COUNT ==========
-    if (departmentId) {
+    if (department) {
       const { Department } = require("../models/Department.model");
-      const dept = await Department.findById(departmentId);
+      const dept = await Department.findById(department);
       if (dept) {
         await dept.updateEmployeeCount();
       }
@@ -454,11 +480,11 @@ const register = async (req, res) => {
   }
 };
 
-// ============ UPDATE USER (Admin only) - UPDATED ============
+// ============ UPDATE USER (Admin only) ============
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, phoneNumber, role, isActive, departmentId, employeeId } =
+    const { fullName, phoneNumber, role, isActive, department, employeeId } =
       req.body;
 
     // Get current user to check department change
@@ -470,7 +496,15 @@ const updateUser = async (req, res) => {
       });
     }
 
-    const oldDepartmentId = currentUser.departmentId?.toString();
+    const oldDepartment = currentUser.department?.toString();
+
+    // If roles are being updated, handle the role field
+    if (req.body.roles) {
+      const roleDoc = await Role.findById(req.body.roles[0]);
+      if (roleDoc) {
+        req.body.role = roleDoc.code.toLowerCase();
+      }
+    }
 
     const user = await User.findByIdAndUpdate(
       id,
@@ -479,11 +513,15 @@ const updateUser = async (req, res) => {
         phoneNumber,
         role,
         isActive,
-        departmentId,
+        department,
         employeeId,
+        ...(req.body.roles && { roles: req.body.roles }),
       },
       { new: true, runValidators: true },
-    ).select("-password");
+    )
+      .select("-password")
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(404).json({
@@ -493,19 +531,19 @@ const updateUser = async (req, res) => {
     }
 
     // ========== UPDATE DEPARTMENT COUNTS ==========
-    if (departmentId && departmentId !== oldDepartmentId) {
+    if (department && department !== oldDepartment) {
       const { Department } = require("../models/Department.model");
 
       // Update old department
-      if (oldDepartmentId) {
-        const oldDept = await Department.findById(oldDepartmentId);
+      if (oldDepartment) {
+        const oldDept = await Department.findById(oldDepartment);
         if (oldDept) {
           await oldDept.updateEmployeeCount();
         }
       }
       // Update new department
-      if (departmentId) {
-        const newDept = await Department.findById(departmentId);
+      if (department) {
+        const newDept = await Department.findById(department);
         if (newDept) {
           await newDept.updateEmployeeCount();
         }
@@ -521,12 +559,12 @@ const updateUser = async (req, res) => {
     console.error("Update user error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
 
-// ============ DELETE USER (Admin only) - UPDATED ============
+// ============ DELETE USER (Admin only) ============
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -539,7 +577,7 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    // Get user before deleting to get departmentId
+    // Get user before deleting to get department
     const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({
@@ -548,14 +586,14 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    const departmentId = user.departmentId;
+    const department = user.department;
 
     await User.findByIdAndDelete(id);
 
     // ========== UPDATE DEPARTMENT COUNT ==========
-    if (departmentId) {
+    if (department) {
       const { Department } = require("../models/Department.model");
-      const dept = await Department.findById(departmentId);
+      const dept = await Department.findById(department);
       if (dept) {
         await dept.updateEmployeeCount();
       }
@@ -569,7 +607,7 @@ const deleteUser = async (req, res) => {
     console.error("Delete user error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
@@ -597,11 +635,10 @@ const changeUserRole = async (req, res) => {
       });
     }
 
-    const user = await User.findByIdAndUpdate(
-      id,
-      { role },
-      { new: true },
-    ).select("-password");
+    const user = await User.findByIdAndUpdate(id, { role }, { new: true })
+      .select("-password")
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(404).json({
@@ -619,7 +656,7 @@ const changeUserRole = async (req, res) => {
     console.error("Change role error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
@@ -675,7 +712,7 @@ const changePassword = async (req, res) => {
     console.error("Change password error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
@@ -707,12 +744,11 @@ const completeOnboarding = async (req, res) => {
     console.error("Onboarding error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
 
-// ============ UPDATE MY PROFILE ============
 // ============ UPDATE MY PROFILE ============
 const updateMyProfile = async (req, res) => {
   try {
@@ -721,7 +757,7 @@ const updateMyProfile = async (req, res) => {
       fullName,
       phoneNumber,
       employeeId,
-      departmentId,
+      department,
       bio,
       position,
       location,
@@ -742,7 +778,7 @@ const updateMyProfile = async (req, res) => {
     if (fullName !== undefined) updates.fullName = fullName;
     if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
     if (employeeId !== undefined) updates.employeeId = employeeId;
-    if (departmentId !== undefined) updates.departmentId = departmentId;
+    if (department !== undefined) updates.department = department;
     if (bio !== undefined) updates.bio = bio;
     if (position !== undefined) updates.position = position;
     if (location !== undefined) updates.location = location;
@@ -765,7 +801,8 @@ const updateMyProfile = async (req, res) => {
       { new: true, runValidators: true },
     )
       .select("-password")
-      .populate("departmentId", "name code");
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(404).json({
@@ -814,7 +851,7 @@ const uploadProfilePhoto = async (req, res) => {
     console.error("Upload photo error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
@@ -831,7 +868,7 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       // Don't reveal if user exists or not for security
       return res.json({
@@ -889,13 +926,12 @@ const forgotPassword = async (req, res) => {
     console.error("Forgot password error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
 
 // ============ RESET PASSWORD ============
-// Reset Password - Set new password
 const resetPassword = async (req, res) => {
   try {
     const { token } = req.params;
@@ -936,7 +972,6 @@ const resetPassword = async (req, res) => {
     }
 
     // Hash password
-    const bcrypt = require("bcryptjs");
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
     user.resetPasswordToken = undefined;
@@ -977,7 +1012,7 @@ const resetPassword = async (req, res) => {
     console.error("Reset password error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
@@ -988,7 +1023,8 @@ const getUserProfile = async (req, res) => {
     const { id } = req.params;
     const user = await User.findById(id)
       .select("-password")
-      .populate("departmentId", "name code");
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(404).json({
@@ -1005,7 +1041,7 @@ const getUserProfile = async (req, res) => {
     console.error("Get user profile error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
@@ -1015,14 +1051,15 @@ const exportUsers = async (req, res) => {
   try {
     const users = await User.find()
       .select("-password")
-      .populate("departmentId", "name code");
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     const csvData = users.map((user) => ({
       "Full Name": user.fullName,
       Email: user.email,
       Role: user.role,
       "Employee ID": user.employeeId,
-      Department: user.departmentId?.name || "N/A",
+      Department: user.department?.name || "N/A",
       Status: user.isActive ? "Active" : "Inactive",
       "Last Login": user.lastLogin
         ? new Date(user.lastLogin).toLocaleDateString()
@@ -1039,12 +1076,12 @@ const exportUsers = async (req, res) => {
     console.error("Export users error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };
 
-// ============ BULK IMPORT USERS - UPDATED ============
+// ============ BULK IMPORT USERS ============
 const bulkImportUsers = async (req, res) => {
   try {
     const { users } = req.body;
@@ -1065,16 +1102,30 @@ const bulkImportUsers = async (req, res) => {
 
     for (const userData of users) {
       try {
-        const { fullName, email, password, employeeId, role, departmentId } =
+        const { fullName, email, password, employeeId, role, department } =
           userData;
 
         // Check if user exists
         const existingUser = await User.findOne({
-          $or: [{ email }, { employeeId }],
+          $or: [{ email: email.toLowerCase() }, { employeeId }],
         });
         if (existingUser) {
           results.failed.push({ ...userData, error: "User already exists" });
           continue;
+        }
+
+        // Get role ID if role is provided
+        let roleId = null;
+        if (role) {
+          const roleDoc = await Role.findOne({ code: role.toUpperCase() });
+          if (roleDoc) {
+            roleId = roleDoc._id;
+          }
+        } else {
+          const defaultRole = await Role.findOne({ code: "EMPLOYEE" });
+          if (defaultRole) {
+            roleId = defaultRole._id;
+          }
         }
 
         // Hash password
@@ -1087,12 +1138,13 @@ const bulkImportUsers = async (req, res) => {
           password: hashedPassword,
           employeeId: employeeId || `EMP${Date.now()}`,
           role: role || "employee",
-          departmentId: departmentId || null,
+          roles: roleId ? [roleId] : [],
+          department: department || null,
           isActive: true,
         });
 
-        if (departmentId) {
-          departmentsToUpdate.add(departmentId.toString());
+        if (department) {
+          departmentsToUpdate.add(department.toString());
         }
 
         results.successful.push(sanitizeUser(user));
@@ -1121,7 +1173,7 @@ const bulkImportUsers = async (req, res) => {
     console.error("Bulk import error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Server error: " + error.message,
     });
   }
 };

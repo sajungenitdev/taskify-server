@@ -47,13 +47,16 @@ const taskSchema = new mongoose.Schema(
     deadline: { type: Date, required: true },
     revisedDeadline: { type: Date },
     isApprovalRequired: { type: Boolean, default: false },
+
     evidenceRequired: { type: Boolean, default: false },
     evidenceUrls: [{ type: String }],
     evidenceSubmitted: { type: Boolean, default: false },
     evidenceSubmittedAt: { type: Date },
-    order: { type: Number, default: 0 },
     rejectionReason: { type: String, default: "" },
     approvalNote: { type: String, default: "" },
+
+    order: { type: Number, default: 0 },
+
     extensionRequests: [
       {
         requestedDate: { type: Date, default: Date.now },

@@ -10,11 +10,19 @@ const { createNotification } = require("./notification.controller");
 // ============================================================
 // VALID STATUSES - Used for validation
 // ============================================================
-const VALID_STATUSES = ["pending", "in_progress", "submitted", "completed", "overdue", "rejected"];
+const VALID_STATUSES = [
+  "pending",
+  "in_progress",
+  "submitted",
+  "completed",
+  "overdue",
+  "rejected",
+];
 
 // ============================================================
 // GET TASKS - Optimized with parallel queries and lean
 // ============================================================
+
 const getTasks = async (req, res) => {
   try {
     const user = req.user;
@@ -33,7 +41,6 @@ const getTasks = async (req, res) => {
     } else if (user.role === "dept_manager" || user.role === "project_manager") {
       query.departmentId = user.departmentId;
     }
-    // Admin, Super Admin, HR can see all tasks
 
     if (status) query.status = status;
     if (priority) query.priority = priority;
@@ -42,7 +49,9 @@ const getTasks = async (req, res) => {
     // Parallel queries with lean for performance
     const [tasks, total, stats] = await Promise.all([
       Task.find(query)
-        .select("_id title description priority status deadline estimatedHours projectId createdAt updatedAt")
+        .select(
+          "_id title description priority status deadline estimatedHours projectId createdAt updatedAt evidenceUrls evidenceRequired rejectionReason approvalNote evidenceSubmitted evidenceSubmittedAt"
+        )
         .populate("assignedTo", "fullName email employeeId")
         .populate("assignedBy", "fullName email")
         .populate("projectId", "name code")
@@ -98,6 +107,7 @@ const getTasks = async (req, res) => {
 // ============================================================
 // GET MY TASKS - Optimized for employee view
 // ============================================================
+
 const getMyTasks = async (req, res) => {
   try {
     const user = req.user;
@@ -108,7 +118,9 @@ const getMyTasks = async (req, res) => {
 
     const [tasks, stats] = await Promise.all([
       Task.find(query)
-        .select("_id title description priority status deadline estimatedHours projectId createdAt updatedAt")
+        .select(
+          "_id title description priority status deadline estimatedHours projectId createdAt updatedAt evidenceUrls evidenceRequired rejectionReason approvalNote evidenceSubmitted evidenceSubmittedAt"
+        )
         .populate("assignedBy", "fullName email")
         .populate("projectId", "name code")
         .sort({ deadline: 1 })
@@ -154,6 +166,7 @@ const getMyTasks = async (req, res) => {
 // ============================================================
 // GET TASK BY ID - With permission check
 // ============================================================
+
 const getTaskById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -181,7 +194,9 @@ const getTaskById = async (req, res) => {
 
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId._id).select("projectManager").lean();
+      const project = await Project.findById(task.projectId._id)
+        .select("projectManager")
+        .lean();
       if (project && project.projectManager) {
         isProjectManager = project.projectManager.toString() === user._id.toString();
       }
@@ -189,7 +204,9 @@ const getTaskById = async (req, res) => {
 
     let isLineManager = false;
     if (user.role === "line_manager" && task.assignedTo) {
-      const assignee = await User.findById(task.assignedTo._id).select("managerId").lean();
+      const assignee = await User.findById(task.assignedTo._id)
+        .select("managerId")
+        .lean();
       if (assignee && assignee.managerId) {
         isLineManager = assignee.managerId.toString() === user._id.toString();
       }
@@ -204,13 +221,23 @@ const getTaskById = async (req, res) => {
       });
     }
 
-    res.json({ success: true, data: task });
+    // Make sure all fields are included
+    const taskResponse = {
+      ...task,
+      evidenceUrls: task.evidenceUrls || [],
+      evidenceRequired: task.evidenceRequired || false,
+      evidenceSubmitted: task.evidenceSubmitted || false,
+      evidenceSubmittedAt: task.evidenceSubmittedAt || null,
+      rejectionReason: task.rejectionReason || "",
+      approvalNote: task.approvalNote || "",
+    };
+
+    res.json({ success: true, data: taskResponse });
   } catch (error) {
     console.error("Get task error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
-
 // ============================================================
 // CREATE TASK - Optimized with parallel queries and background notifications
 // ============================================================
@@ -238,22 +265,31 @@ const createTask = async (req, res) => {
     if (!title || !description || !assignedTo || !deadline || !projectId) {
       return res.status(400).json({
         success: false,
-        message: "Missing required fields: title, description, assignedTo, deadline, projectId",
+        message:
+          "Missing required fields: title, description, assignedTo, deadline, projectId",
       });
     }
 
     // Parallel validation queries
     const [assignedUser, project] = await Promise.all([
-      User.findById(assignedTo).select("_id fullName email departmentId role").lean(),
-      Project.findById(projectId).select("_id name code departmentId projectManager teamMembers").lean(),
+      User.findById(assignedTo)
+        .select("_id fullName email departmentId role")
+        .lean(),
+      Project.findById(projectId)
+        .select("_id name code departmentId projectManager teamMembers")
+        .lean(),
     ]);
 
     if (!assignedUser) {
-      return res.status(404).json({ success: false, message: "Assigned user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Assigned user not found" });
     }
 
     if (!project) {
-      return res.status(404).json({ success: false, message: "Project not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Project not found" });
     }
 
     // Permission Check
@@ -271,16 +307,20 @@ const createTask = async (req, res) => {
       }
     } else if (userRole === "project_manager") {
       const isInTeam = project.teamMembers?.some(
-        (member) => member.userId?.toString() === assignedTo
+        (member) => member.userId?.toString() === assignedTo,
       );
-      if (!isInTeam && project.projectManager?.toString() !== user._id.toString()) {
+      if (
+        !isInTeam &&
+        project.projectManager?.toString() !== user._id.toString()
+      ) {
         return res.status(403).json({
           success: false,
           message: "User is not a member of this project",
         });
       }
     } else if (userRole === "line_manager") {
-      const isDirectReport = assignedUser.managerId?.toString() === user._id.toString();
+      const isDirectReport =
+        assignedUser.managerId?.toString() === user._id.toString();
       if (!isDirectReport) {
         return res.status(403).json({
           success: false,
@@ -305,7 +345,8 @@ const createTask = async (req, res) => {
     const taskCount = await Task.countDocuments({ projectId });
 
     // Determine department ID
-    const finalDepartmentId = departmentId || assignedUser.departmentId || project.departmentId;
+    const finalDepartmentId =
+      departmentId || assignedUser.departmentId || project.departmentId;
 
     // Create task
     const task = await Task.create({
@@ -332,11 +373,15 @@ const createTask = async (req, res) => {
     // Update project task count in background
     Project.findByIdAndUpdate(projectId, {
       $inc: { tasksCount: 1 },
-    }).exec().catch(err => console.error("Project update error:", err));
+    })
+      .exec()
+      .catch((err) => console.error("Project update error:", err));
 
     // Populate the created task with only needed fields
     const populatedTask = await Task.findById(task._id)
-      .select("_id title description priority status deadline estimatedHours projectId createdAt")
+      .select(
+        "_id title description priority status deadline estimatedHours projectId createdAt",
+      )
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code")
@@ -344,7 +389,7 @@ const createTask = async (req, res) => {
 
     // Send notification in background (non-blocking)
     setImmediate(() => {
-      NotificationService.sendTaskAssigned(task._id).catch(err => {
+      NotificationService.sendTaskAssigned(task._id).catch((err) => {
         console.error("Notification error:", err);
       });
     });
@@ -354,7 +399,6 @@ const createTask = async (req, res) => {
       message: "Task created successfully",
       data: populatedTask,
     });
-
   } catch (error) {
     console.error("Create task error:", error);
     res.status(500).json({
@@ -375,7 +419,9 @@ const updateTask = async (req, res) => {
 
     const task = await Task.findById(id);
     if (!task) {
-      return res.status(404).json({ success: false, message: "Task not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
     }
 
     // Permission Check
@@ -384,14 +430,19 @@ const updateTask = async (req, res) => {
 
     let isDeptManager = false;
     if (user.role === "dept_manager" && task.departmentId) {
-      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
+      isDeptManager =
+        user.departmentId &&
+        user.departmentId.toString() === task.departmentId.toString();
     }
 
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId).select("projectManager").lean();
+      const project = await Project.findById(task.projectId)
+        .select("projectManager")
+        .lean();
       if (project && project.projectManager) {
-        isProjectManager = project.projectManager.toString() === user._id.toString();
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
       }
     }
 
@@ -404,9 +455,16 @@ const updateTask = async (req, res) => {
 
     // Role-based update restrictions for employees
     if (user.role === "employee") {
-      const allowedUpdates = ["status", "evidenceUrls", "evidenceSubmitted", "evidenceSubmittedAt"];
+      const allowedUpdates = [
+        "status",
+        "evidenceUrls",
+        "evidenceSubmitted",
+        "evidenceSubmittedAt",
+      ];
       const requestedUpdates = Object.keys(updates);
-      const isValidUpdate = requestedUpdates.every((update) => allowedUpdates.includes(update));
+      const isValidUpdate = requestedUpdates.every((update) =>
+        allowedUpdates.includes(update),
+      );
 
       if (!isValidUpdate) {
         return res.status(403).json({
@@ -429,7 +487,9 @@ const updateTask = async (req, res) => {
     if (updates.status === "completed" && task.status !== "completed") {
       Project.findByIdAndUpdate(task.projectId, {
         $inc: { completedTasks: 1 },
-      }).exec().catch(err => console.error("Project update error:", err));
+      })
+        .exec()
+        .catch((err) => console.error("Project update error:", err));
     }
 
     res.json({
@@ -443,28 +503,29 @@ const updateTask = async (req, res) => {
   }
 };
 
-// ============================================================
-// UPDATE TASK STATUS - With evidence check and notifications
-// ============================================================
+// controllers/task.controller.js - Fixed updateTaskStatus
+
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, rejectionReason, approvalNote, evidenceUrls } = req.body;
     const user = req.user;
 
-    // Validate status - allow any status, but warn if not in valid list
+    console.log("📝 updateTaskStatus called with:", { id, status, evidenceUrls });
+
+    // Validate status
     if (!status) {
       return res.status(400).json({ success: false, message: "Status is required" });
     }
 
-    // Check if status is in valid list, if not, map to a valid one
+    // Check if status is in valid list
     let finalStatus = status;
     if (!VALID_STATUSES.includes(status)) {
       console.warn(`Custom status "${status}" received, mapping to "in_progress"`);
       finalStatus = "in_progress";
     }
 
-    // Get old task before update with lean
+    // Get old task before update
     const oldTask = await Task.findById(id)
       .populate("assignedTo", "fullName email")
       .populate("assignedBy", "fullName email")
@@ -475,8 +536,8 @@ const updateTaskStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // Permission Check
-    const isAssignee = oldTask.assignedTo._id.toString() === user._id.toString();
+    // Permission Checks
+    const isAssignee = oldTask.assignedTo && oldTask.assignedTo._id.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
 
     let isDeptManager = false;
@@ -518,49 +579,51 @@ const updateTaskStatus = async (req, res) => {
 
     const oldStatus = oldTask.status;
 
-    // Check evidence requirement
-    if (finalStatus === "submitted" && oldTask.evidenceRequired) {
-      const hasEvidenceUrls = evidenceUrls && evidenceUrls.length > 0;
-      const hasExistingEvidence = oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
+    // ============ BUILD UPDATE OBJECT ============
+    const updateData = { 
+      status: finalStatus,
+    };
 
-      if (!hasEvidenceUrls && !hasExistingEvidence) {
+    // ============ HANDLE EVIDENCE ============
+    if (evidenceUrls && Array.isArray(evidenceUrls) && evidenceUrls.length > 0) {
+      console.log("📎 Evidence URLs received:", evidenceUrls);
+      
+      const existingUrls = oldTask.evidenceUrls || [];
+      const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
+      
+      updateData.evidenceUrls = allUrls;
+      updateData.evidenceSubmitted = true;
+      updateData.evidenceSubmittedAt = new Date();
+      
+      console.log("📎 Evidence URLs saved:", allUrls);
+    } else if (finalStatus === "submitted" && oldTask.evidenceRequired) {
+      const hasExistingEvidence = oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
+      
+      if (!hasExistingEvidence) {
         return res.status(400).json({
           success: false,
           message: "Evidence is required to submit this task. Please upload evidence first.",
           requiresEvidence: true,
         });
       }
+      
+      updateData.evidenceSubmitted = true;
+      updateData.evidenceSubmittedAt = new Date();
     }
 
-    // Build update object
-    const updateData = { 
-      status: finalStatus,
-      // Store the original custom status if provided (for frontend display)
-      customStatus: status !== finalStatus ? status : undefined
-    };
-
+    // Handle rejection reason
     if (finalStatus === "rejected" && rejectionReason) {
       updateData.rejectionReason = rejectionReason;
     }
 
+    // Handle approval note
     if (finalStatus === "completed" && approvalNote) {
       updateData.approvalNote = approvalNote;
     }
 
-    if (evidenceUrls && evidenceUrls.length > 0) {
-      const existingUrls = oldTask.evidenceUrls || [];
-      const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
-      updateData.evidenceUrls = allUrls;
-      updateData.evidenceSubmitted = true;
-      updateData.evidenceSubmittedAt = new Date();
-    }
-
-    if (finalStatus === "submitted") {
-      updateData.evidenceSubmitted = true;
-      updateData.evidenceSubmittedAt = new Date();
-    }
-
-    // Update task
+    // ============ UPDATE THE TASK ============
+    console.log("📤 Updating task with data:", updateData);
+    
     const task = await Task.findByIdAndUpdate(
       id,
       { $set: updateData },
@@ -570,6 +633,13 @@ const updateTaskStatus = async (req, res) => {
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code")
       .lean();
+
+    console.log("✅ Task updated:", {
+      id: task._id,
+      status: task.status,
+      evidenceUrls: task.evidenceUrls,
+      evidenceSubmitted: task.evidenceSubmitted,
+    });
 
     // Update project progress in background
     if (finalStatus === "completed" && oldStatus !== "completed") {
@@ -594,27 +664,120 @@ const updateTaskStatus = async (req, res) => {
       });
     }
 
-    // Return the status the frontend expects
-    const responseStatus = task.customStatus || finalStatus;
+    // ============ REJECTION NOTIFICATION ============
+    if (finalStatus === "rejected" && rejectionReason) {
+      setImmediate(() => {
+        notifyAssigneeOfRejection(task, user, rejectionReason).catch(err => {
+          console.error("Rejection notification error:", err);
+        });
+      });
+    }
 
+    // ============ APPROVAL NOTIFICATION ============
+    if (finalStatus === "completed" && approvalNote) {
+      setImmediate(() => {
+        notifyAssigneeOfApproval(task, user, approvalNote).catch(err => {
+          console.error("Approval notification error:", err);
+        });
+      });
+    }
+
+    // ============ FIX: Use finalStatus for response ============
     res.json({
       success: true,
-      message: `Task status updated to ${responseStatus}`,
-      data: { ...task, status: responseStatus },
+      message: `Task status updated to ${finalStatus}`,
+      data: task,
     });
+
   } catch (error) {
     console.error("Update status error:", error);
-    res.status(500).json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
+  }
+};
+// Add these helper functions at the bottom of your task.controller.js
+
+// ============================================================
+// NOTIFY ASSIGNEE OF REJECTION
+// ============================================================
+const notifyAssigneeOfRejection = async (task, reviewer, rejectionReason) => {
+  try {
+    if (!task.assignedTo || !task.assignedTo._id) {
+      console.log("No assignee found for rejection notification");
+      return;
+    }
+
+    const assigneeId = task.assignedTo._id;
+    const reviewerName = reviewer?.fullName || "Manager";
+
+    await createNotification({
+      userId: assigneeId,
+      title: "❌ Task Rejected",
+      message: `${reviewerName} has rejected your task "${task.title}". Reason: ${rejectionReason}`,
+      type: "error",
+      category: "task_update",
+      taskId: task._id,
+      taskTitle: task.title,
+      actionUrl: `/tasks/${task._id}`,
+      metadata: {
+        reviewer: reviewerName,
+        rejectionReason: rejectionReason,
+        projectName: task.projectId?.name,
+      },
+    });
+
+    console.log(`✅ Rejection notification sent to ${task.assignedTo.fullName}`);
+  } catch (error) {
+    console.error("Error sending rejection notification:", error);
   }
 };
 
 // ============================================================
-// SUBMIT EVIDENCE
+// NOTIFY ASSIGNEE OF APPROVAL
 // ============================================================
+const notifyAssigneeOfApproval = async (task, approver, approvalNote) => {
+  try {
+    if (!task.assignedTo || !task.assignedTo._id) {
+      console.log("No assignee found for approval notification");
+      return;
+    }
+
+    const assigneeId = task.assignedTo._id;
+    const approverName = approver?.fullName || "Manager";
+
+    await createNotification({
+      userId: assigneeId,
+      title: "✅ Task Approved",
+      message: `${approverName} has approved your task "${task.title}". ${approvalNote ? `Note: ${approvalNote}` : ''}`,
+      type: "success",
+      category: "task_update",
+      taskId: task._id,
+      taskTitle: task.title,
+      actionUrl: `/tasks/${task._id}`,
+      metadata: {
+        approver: approverName,
+        approvalNote: approvalNote,
+        projectName: task.projectId?.name,
+      },
+    });
+
+    console.log(`✅ Approval notification sent to ${task.assignedTo.fullName}`);
+  } catch (error) {
+    console.error("Error sending approval notification:", error);
+  }
+};
+
+
+// controllers/task.controller.js
+
 const submitEvidence = async (req, res) => {
   try {
     const { id } = req.params;
     const { evidenceUrls } = req.body;
+
+    console.log("📎 submitEvidence called with:", { id, evidenceUrls });
 
     if (!evidenceUrls || !Array.isArray(evidenceUrls) || evidenceUrls.length === 0) {
       return res.status(400).json({
@@ -638,6 +801,8 @@ const submitEvidence = async (req, res) => {
     const existingUrls = task.evidenceUrls || [];
     const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
 
+    console.log("📎 Merged evidence URLs:", allUrls);
+
     const updatedTask = await Task.findByIdAndUpdate(
       id,
       {
@@ -652,6 +817,12 @@ const submitEvidence = async (req, res) => {
       .populate("assignedTo", "fullName email")
       .lean();
 
+    console.log("✅ Evidence submitted successfully:", {
+      id: updatedTask._id,
+      evidenceUrls: updatedTask.evidenceUrls,
+      evidenceSubmitted: updatedTask.evidenceSubmitted,
+    });
+
     res.json({
       success: true,
       message: "Evidence submitted successfully",
@@ -665,7 +836,6 @@ const submitEvidence = async (req, res) => {
     });
   }
 };
-
 // ============================================================
 // NOTIFY MANAGERS AND ADMINS - Optimized
 // ============================================================
@@ -690,8 +860,10 @@ const notifyAllManagersAndAdmins = async (task, submitter) => {
     const submitterName = submitter?.fullName || "Employee";
 
     const notificationPromises = managers
-      .filter(manager => manager._id.toString() !== submitter?._id?.toString())
-      .map(manager =>
+      .filter(
+        (manager) => manager._id.toString() !== submitter?._id?.toString(),
+      )
+      .map((manager) =>
         createNotification({
           userId: manager._id,
           title: "Task Ready for Review",
@@ -707,7 +879,7 @@ const notifyAllManagersAndAdmins = async (task, submitter) => {
             priority: task.priority,
             deadline: task.deadline,
           },
-        })
+        }),
       );
 
     await Promise.all(notificationPromises);
@@ -743,14 +915,16 @@ const requestExtension = async (req, res) => {
           },
         },
       },
-      { new: true }
+      { new: true },
     )
       .populate("assignedTo", "fullName email")
       .populate("assignedBy", "fullName email")
       .lean();
 
     if (!task) {
-      return res.status(404).json({ success: false, message: "Task not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
     }
 
     res.json({
@@ -781,14 +955,16 @@ const approveExtension = async (req, res) => {
           revisedDeadline: new Date(newDeadline),
         },
       },
-      { new: true }
+      { new: true },
     )
       .populate("assignedTo", "fullName email")
       .populate("assignedBy", "fullName email")
       .lean();
 
     if (!task) {
-      return res.status(404).json({ success: false, message: "Task or extension not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Task or extension not found" });
     }
 
     res.json({
@@ -812,7 +988,9 @@ const deleteTask = async (req, res) => {
 
     const task = await Task.findById(id);
     if (!task) {
-      return res.status(404).json({ success: false, message: "Task not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Task not found" });
     }
 
     // Permission Check
@@ -820,14 +998,19 @@ const deleteTask = async (req, res) => {
 
     let isDeptManager = false;
     if (user.role === "dept_manager" && task.departmentId) {
-      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
+      isDeptManager =
+        user.departmentId &&
+        user.departmentId.toString() === task.departmentId.toString();
     }
 
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId).select("projectManager").lean();
+      const project = await Project.findById(task.projectId)
+        .select("projectManager")
+        .lean();
       if (project && project.projectManager) {
-        isProjectManager = project.projectManager.toString() === user._id.toString();
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
       }
     }
 
@@ -844,7 +1027,9 @@ const deleteTask = async (req, res) => {
         tasksCount: -1,
         completedTasks: task.status === "completed" ? -1 : 0,
       },
-    }).exec().catch(err => console.error("Project update error:", err));
+    })
+      .exec()
+      .catch((err) => console.error("Project update error:", err));
 
     await Task.findByIdAndDelete(id);
 
@@ -880,26 +1065,38 @@ const getExtensionRequests = async (req, res) => {
 
     let isDeptManager = false;
     if (user.role === "dept_manager" && task.departmentId) {
-      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
+      isDeptManager =
+        user.departmentId &&
+        user.departmentId.toString() === task.departmentId.toString();
     }
 
     let isProjectManager = false;
     if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId).select("projectManager").lean();
+      const project = await Project.findById(task.projectId)
+        .select("projectManager")
+        .lean();
       if (project && project.projectManager) {
-        isProjectManager = project.projectManager.toString() === user._id.toString();
+        isProjectManager =
+          project.projectManager.toString() === user._id.toString();
       }
     }
 
     let isLineManager = false;
     if (user.role === "line_manager" && task.assignedTo) {
-      const assignee = await User.findById(task.assignedTo).select("managerId").lean();
+      const assignee = await User.findById(task.assignedTo)
+        .select("managerId")
+        .lean();
       if (assignee && assignee.managerId) {
         isLineManager = assignee.managerId.toString() === user._id.toString();
       }
     }
 
-    const canView = isAssignee || isAdmin || isDeptManager || isProjectManager || isLineManager;
+    const canView =
+      isAssignee ||
+      isAdmin ||
+      isDeptManager ||
+      isProjectManager ||
+      isLineManager;
 
     if (!canView) {
       return res.status(403).json({
@@ -910,7 +1107,10 @@ const getExtensionRequests = async (req, res) => {
 
     const extensionRequests = task.extensionRequests || [];
     extensionRequests.sort((a, b) => {
-      return new Date(b.createdAt || b.requestedDate) - new Date(a.createdAt || a.requestedDate);
+      return (
+        new Date(b.createdAt || b.requestedDate) -
+        new Date(a.createdAt || a.requestedDate)
+      );
     });
 
     res.json({
@@ -933,9 +1133,6 @@ const getExtensionRequests = async (req, res) => {
   }
 };
 
-// ============================================================
-// BULK CREATE TASKS - Optimized with transaction
-// ============================================================
 // ============================================================
 // BULK CREATE TASKS - Optimized with transaction
 // ============================================================
@@ -978,13 +1175,15 @@ const bulkCreateTasks = async (req, res) => {
     }
 
     // Validate all users in one query
-    const assignedUserIds = tasks.map(t => t.assignedTo).filter(id => id);
+    const assignedUserIds = tasks.map((t) => t.assignedTo).filter((id) => id);
     const existingUsers = await User.find(
       { _id: { $in: assignedUserIds } },
-      { _id: 1, departmentId: 1 }
-    ).lean().session(session);
+      { _id: 1, departmentId: 1 },
+    )
+      .lean()
+      .session(session);
 
-    const existingUserIds = new Set(existingUsers.map(u => u._id.toString()));
+    const existingUserIds = new Set(existingUsers.map((u) => u._id.toString()));
 
     // Validate and prepare tasks
     const validTasks = [];
@@ -996,8 +1195,10 @@ const bulkCreateTasks = async (req, res) => {
       const errors = [];
 
       if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
-      if (!task.description) errors.push(`Task ${i + 1}: Description is required`);
-      if (!task.assignedTo) errors.push(`Task ${i + 1}: AssignedTo is required`);
+      if (!task.description)
+        errors.push(`Task ${i + 1}: Description is required`);
+      if (!task.assignedTo)
+        errors.push(`Task ${i + 1}: AssignedTo is required`);
       if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
 
       if (task.assignedTo && !existingUserIds.has(task.assignedTo)) {
@@ -1042,7 +1243,7 @@ const bulkCreateTasks = async (req, res) => {
     await Project.findByIdAndUpdate(
       projectId,
       { $inc: { tasksCount: createdTasks.length } },
-      { session }
+      { session },
     );
 
     await session.commitTransaction();
@@ -1052,7 +1253,9 @@ const bulkCreateTasks = async (req, res) => {
     const populatedTasks = await Task.find({
       _id: { $in: createdTasks.map((t) => t._id) },
     })
-      .select("_id title description priority status deadline estimatedHours projectId")
+      .select(
+        "_id title description priority status deadline estimatedHours projectId",
+      )
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code")
@@ -1060,12 +1263,12 @@ const bulkCreateTasks = async (req, res) => {
 
     // Send notifications in parallel
     const notificationPromises = populatedTasks.map((task) =>
-      NotificationService.sendTaskAssigned(task._id).catch(err =>
-        console.error("Notification error for task", task._id, err)
-      )
+      NotificationService.sendTaskAssigned(task._id).catch((err) =>
+        console.error("Notification error for task", task._id, err),
+      ),
     );
-    Promise.all(notificationPromises).catch(err =>
-      console.error("Some notifications failed:", err)
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Some notifications failed:", err),
     );
 
     res.status(201).json({
@@ -1114,15 +1317,15 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
     const userDepartmentId = user.departmentId || null;
 
     // Validate all users in one query
-    const assignedUserIds = tasks.map(t => t.assignedTo).filter(id => id);
+    const assignedUserIds = tasks.map((t) => t.assignedTo).filter((id) => id);
     const existingUsers = await User.find(
       { _id: { $in: assignedUserIds } },
-      { _id: 1, departmentId: 1 }
+      { _id: 1, departmentId: 1 },
     ).lean();
 
-    const existingUserIds = new Set(existingUsers.map(u => u._id.toString()));
+    const existingUserIds = new Set(existingUsers.map((u) => u._id.toString()));
     const userDepartmentMap = {};
-    existingUsers.forEach(u => {
+    existingUsers.forEach((u) => {
       userDepartmentMap[u._id.toString()] = u.departmentId;
     });
 
@@ -1135,8 +1338,10 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
       const errors = [];
 
       if (!task.title) errors.push(`Task ${i + 1}: Title is required`);
-      if (!task.description) errors.push(`Task ${i + 1}: Description is required`);
-      if (!task.assignedTo) errors.push(`Task ${i + 1}: AssignedTo is required`);
+      if (!task.description)
+        errors.push(`Task ${i + 1}: Description is required`);
+      if (!task.assignedTo)
+        errors.push(`Task ${i + 1}: AssignedTo is required`);
       if (!task.deadline) errors.push(`Task ${i + 1}: Deadline is required`);
 
       if (task.assignedTo && !existingUserIds.has(task.assignedTo)) {
@@ -1146,7 +1351,8 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
       if (errors.length > 0) {
         validationErrors.push(...errors);
       } else {
-        const departmentId = userDepartmentMap[task.assignedTo] || userDepartmentId;
+        const departmentId =
+          userDepartmentMap[task.assignedTo] || userDepartmentId;
         validTasks.push({
           title: task.title,
           description: task.description,
@@ -1183,12 +1389,12 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
 
     // Send notifications in parallel
     const notificationPromises = populatedTasks.map((task) =>
-      NotificationService.sendTaskAssigned(task._id).catch(err =>
-        console.error("Notification error for task", task._id, err)
-      )
+      NotificationService.sendTaskAssigned(task._id).catch((err) =>
+        console.error("Notification error for task", task._id, err),
+      ),
     );
-    Promise.all(notificationPromises).catch(err =>
-      console.error("Some notifications failed:", err)
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Some notifications failed:", err),
     );
 
     res.status(201).json({
@@ -1229,7 +1435,9 @@ const getTasksByProject = async (req, res) => {
     // Parallel queries
     const [tasks, total, stats, estimatedHoursResult] = await Promise.all([
       Task.find(query)
-        .select("_id title description priority status deadline estimatedHours projectId createdAt")
+        .select(
+          "_id title description priority status deadline estimatedHours projectId createdAt",
+        )
         .populate("assignedTo", "fullName email employeeId")
         .populate("assignedBy", "fullName email")
         .sort({ order: 1, createdAt: -1 })
@@ -1243,12 +1451,24 @@ const getTasksByProject = async (req, res) => {
           $group: {
             _id: null,
             total: { $sum: 1 },
-            pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
-            inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
-            submitted: { $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] } },
-            completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-            overdue: { $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] } },
-            rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } },
+            pending: {
+              $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+            },
+            inProgress: {
+              $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] },
+            },
+            submitted: {
+              $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] },
+            },
+            completed: {
+              $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+            },
+            overdue: {
+              $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] },
+            },
+            rejected: {
+              $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] },
+            },
           },
         },
       ]),
@@ -1335,12 +1555,18 @@ const importTasksFromFile = async (req, res) => {
     // Batch process with Promise.allSettled
     const taskPromises = tasksData.map(async (taskData, index) => {
       try {
-        if (!taskData.title || !taskData.description || !taskData.assignedTo || !taskData.deadline) {
+        if (
+          !taskData.title ||
+          !taskData.description ||
+          !taskData.assignedTo ||
+          !taskData.deadline
+        ) {
           return {
             success: false,
             index,
             task: taskData,
-            error: "Missing required fields: title, description, assignedTo, deadline",
+            error:
+              "Missing required fields: title, description, assignedTo, deadline",
           };
         }
 
@@ -1404,12 +1630,12 @@ const importTasksFromFile = async (req, res) => {
 
     // Send notifications in parallel
     const notificationPromises = results.successful.map((task) =>
-      NotificationService.sendTaskAssigned(task._id).catch(err =>
-        console.error("Notification error:", err)
-      )
+      NotificationService.sendTaskAssigned(task._id).catch((err) =>
+        console.error("Notification error:", err),
+      ),
     );
-    Promise.all(notificationPromises).catch(err =>
-      console.error("Some notifications failed:", err)
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Some notifications failed:", err),
     );
 
     res.json({
@@ -1484,32 +1710,33 @@ const getProjectTasksSummary = async (req, res) => {
     }
 
     // Parallel aggregations
-    const [statusSummary, priorityDistribution, assignedUsers] = await Promise.all([
-      Task.aggregate([
-        { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
-        {
-          $group: {
-            _id: "$status",
-            count: { $sum: 1 },
-            totalEstimatedHours: { $sum: "$estimatedHours" },
+    const [statusSummary, priorityDistribution, assignedUsers] =
+      await Promise.all([
+        Task.aggregate([
+          { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
+          {
+            $group: {
+              _id: "$status",
+              count: { $sum: 1 },
+              totalEstimatedHours: { $sum: "$estimatedHours" },
+            },
           },
-        },
-      ]),
-      Task.aggregate([
-        { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
-        {
-          $group: {
-            _id: "$priority",
-            count: { $sum: 1 },
+        ]),
+        Task.aggregate([
+          { $match: { projectId: new mongoose.Types.ObjectId(projectId) } },
+          {
+            $group: {
+              _id: "$priority",
+              count: { $sum: 1 },
+            },
           },
-        },
-      ]),
-      Task.distinct("assignedTo", { projectId }),
-    ]);
+        ]),
+        Task.distinct("assignedTo", { projectId }),
+      ]);
 
     const assignedUsersDetails = await User.find(
       { _id: { $in: assignedUsers } },
-      "fullName email employeeId"
+      "fullName email employeeId",
     ).lean();
 
     res.json({
@@ -1570,7 +1797,10 @@ const getTaskStatistics = async (req, res) => {
         .select("_id")
         .lean();
       query.assignedTo = { $in: [...teamMembers.map((m) => m._id), user._id] };
-    } else if (user.role === "dept_manager" || user.role === "project_manager") {
+    } else if (
+      user.role === "dept_manager" ||
+      user.role === "project_manager"
+    ) {
       query.departmentId = user.departmentId;
     }
 
@@ -1584,15 +1814,31 @@ const getTaskStatistics = async (req, res) => {
           _id: null,
           total: { $sum: 1 },
           pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
-          inProgress: { $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] } },
-          submitted: { $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] } },
-          completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+          inProgress: {
+            $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] },
+          },
+          submitted: {
+            $sum: { $cond: [{ $eq: ["$status", "submitted"] }, 1, 0] },
+          },
+          completed: {
+            $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+          },
           overdue: { $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] } },
-          rejected: { $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } },
-          lowPriority: { $sum: { $cond: [{ $eq: ["$priority", "low"] }, 1, 0] } },
-          normalPriority: { $sum: { $cond: [{ $eq: ["$priority", "normal"] }, 1, 0] } },
-          highPriority: { $sum: { $cond: [{ $eq: ["$priority", "high"] }, 1, 0] } },
-          urgentPriority: { $sum: { $cond: [{ $eq: ["$priority", "urgent"] }, 1, 0] } },
+          rejected: {
+            $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] },
+          },
+          lowPriority: {
+            $sum: { $cond: [{ $eq: ["$priority", "low"] }, 1, 0] },
+          },
+          normalPriority: {
+            $sum: { $cond: [{ $eq: ["$priority", "normal"] }, 1, 0] },
+          },
+          highPriority: {
+            $sum: { $cond: [{ $eq: ["$priority", "high"] }, 1, 0] },
+          },
+          urgentPriority: {
+            $sum: { $cond: [{ $eq: ["$priority", "urgent"] }, 1, 0] },
+          },
         },
       },
     ]);
@@ -1614,7 +1860,8 @@ const getTaskStatistics = async (req, res) => {
     // Calculate completion rate
     const totalTasks = statsData.total;
     const completedTasks = statsData.completed;
-    statsData.completionRate = totalTasks > 0 ? ((completedTasks / totalTasks) * 100).toFixed(2) : 0;
+    statsData.completionRate =
+      totalTasks > 0 ? ((completedTasks / totalTasks) * 100).toFixed(2) : 0;
 
     res.json({
       success: true,
@@ -1669,4 +1916,7 @@ module.exports = {
   getProjectTasksSummary,
   getTaskStatistics,
   getExtensionRequests,
+  // Add the new helper functions if needed
+  notifyAssigneeOfRejection,
+  notifyAssigneeOfApproval,
 };

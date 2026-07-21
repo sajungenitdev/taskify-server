@@ -1,330 +1,251 @@
+// src/models/User.model.js
 const mongoose = require("mongoose");
-
-const userRoles = {
-  SUPER_ADMIN: "super_admin",
-  ADMIN: "admin",
-  HR_MANAGER: "hr_manager",
-  DEPT_MANAGER: "dept_manager",
-  PROJECT_MANAGER: "project_manager",
-  LINE_MANAGER: "line_manager",
-  EMPLOYEE: "employee",
-};
+const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    // ========== BASIC INFORMATION ==========
     fullName: {
       type: String,
-      required: true,
+      required: [true, "Full name is required"],
       trim: true,
     },
     email: {
       type: String,
-      required: true,
+      required: [true, "Email is required"],
       unique: true,
       lowercase: true,
+      trim: true,
+      match: [
+        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        "Please provide a valid email",
+      ],
     },
     password: {
       type: String,
-      required: true,
+      required: [true, "Password is required"],
+      minlength: [6, "Password must be at least 6 characters"],
       select: false,
+    },
+    // Legacy single role (kept for backward compatibility)
+    role: {
+      type: String,
+      default: "employee",
+      enum: [
+        "super_admin",
+        "admin",
+        "hr_manager",
+        "dept_manager",
+        "project_manager",
+        "line_manager",
+        "employee",
+      ],
+    },
+    // New multiple roles support
+    roles: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Role",
+      },
+    ],
+    department: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+    },
+    position: {
+      type: String,
+      trim: true,
     },
     employeeId: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true,
     },
-    phoneNumber: {
+    phone: {
       type: String,
       trim: true,
+    },
+    avatar: {
+      type: String,
       default: "",
     },
-    profilePhoto: {
-      type: String,
-      default: null,
+    // Profile fields
+    profile: {
+      bio: { type: String, default: "" },
+      address: { type: String, default: "" },
+      city: { type: String, default: "" },
+      state: { type: String, default: "" },
+      country: { type: String, default: "" },
+      postalCode: { type: String, default: "" },
+      dateOfBirth: { type: Date },
+      gender: {
+        type: String,
+        enum: ["male", "female", "other", ""],
+        default: "",
+      },
+      skills: [{ type: String }],
+      socialLinks: {
+        linkedin: { type: String, default: "" },
+        github: { type: String, default: "" },
+        twitter: { type: String, default: "" },
+        website: { type: String, default: "" },
+      },
     },
-
-    // ========== ROLE & DEPARTMENT ==========
-    role: {
-      type: String,
-      enum: Object.values(userRoles),
-      default: userRoles.EMPLOYEE,
+    // Employment details
+    employment: {
+      joiningDate: { type: Date },
+      employmentType: {
+        type: String,
+        enum: ["full-time", "part-time", "contract", "intern", ""],
+        default: "",
+      },
+      workLocation: {
+        type: String,
+        enum: ["on-site", "hybrid", "remote", ""],
+        default: "",
+      },
+      manager: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      reportsTo: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
     },
-    departmentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Department",
-      default: null,
-    },
-    managerId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
-
-    // ========== WORK SETTINGS ==========
-    dailyHoursTarget: {
-      type: Number,
-      enum: [6, 7, 8],
-      default: 8,
-    },
-
-    // ========== ONBOARDING STATUS ==========
-    firstLogin: {
-      type: Boolean,
-      default: true,
-    },
-    onboardingCompleted: {
-      type: Boolean,
-      default: false,
-    },
-    onboardingStep: {
-      type: Number,
-      default: 1,
-      min: 1,
-      max: 3,
-    },
-
-    // ========== ACCOUNT STATUS ==========
+    // Account status
     isActive: {
       type: Boolean,
       default: true,
     },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    isPasswordChanged: {
+      type: Boolean,
+      default: false,
+    },
     lastLogin: {
       type: Date,
-      default: null,
     },
-
-    // ========== PASSWORD RESET ==========
-    resetPasswordToken: {
-      type: String,
-      default: null,
+    loginAttempts: {
+      type: Number,
+      default: 0,
     },
-    resetPasswordExpires: {
+    lockUntil: {
       type: Date,
-      default: null,
     },
-
-    // ========== PROFILE INFORMATION ==========
-    position: {
+    refreshToken: {
       type: String,
-      default: "",
+      select: false,
     },
-    location: {
-      type: String,
-      default: "",
-    },
-    bio: {
-      type: String,
-      maxlength: 500,
-      default: "",
-    },
-    website: {
-      type: String,
-      default: "",
-    },
-
-    // ========== SOCIAL LINKS ==========
-    socialLinks: {
-      linkedin: { type: String, default: "" },
-      github: { type: String, default: "" },
-      twitter: { type: String, default: "" },
-      facebook: { type: String, default: "" },
-      instagram: { type: String, default: "" },
-    },
-
-    // ========== ADDRESS ==========
-    address: {
-      street: { type: String, default: "" },
-      city: { type: String, default: "" },
-      state: { type: String, default: "" },
-      country: { type: String, default: "" },
-      zipCode: { type: String, default: "" },
-    },
-
-    // ========== EMERGENCY CONTACT ==========
-    emergencyContact: {
-      name: { type: String, default: "" },
-      relationship: { type: String, default: "" },
-      phone: { type: String, default: "" },
-      email: { type: String, default: "" },
-    },
-
-    // ========== SKILLS & LANGUAGES ==========
-    skills: [{ type: String }],
-    languages: [{ type: String }],
-
-    // ========== ACHIEVEMENTS ==========
-    achievements: [
-      {
-        title: { type: String },
-        date: { type: String },
-        description: { type: String },
-      },
-    ],
-
-    // ========== WORK HOURS SETTINGS ==========
-    workSettings: {
-      dailyHoursTarget: {
-        type: Number,
-        default: 8,
-        min: 1,
-        max: 24,
-      },
-      weeklyHoursTarget: {
-        type: Number,
-        default: 40,
-        min: 5,
-        max: 168,
-      },
-      startTime: {
-        type: String,
-        default: "09:00",
-        match: /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/,
-      },
-      endTime: {
-        type: String,
-        default: "18:00",
-        match: /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/,
-      },
-      breakDuration: {
-        type: Number,
-        default: 60,
-        min: 0,
-        max: 180,
-      },
-      workDays: {
-        type: [String],
-        enum: [
-          "monday",
-          "tuesday",
-          "wednesday",
-          "thursday",
-          "friday",
-          "saturday",
-          "sunday",
-        ],
-        default: ["monday", "tuesday", "wednesday", "thursday", "friday"],
-      },
-      timezone: {
-        type: String,
-        default: "UTC+06:00",
-      },
-      overtimeThreshold: {
-        type: Number,
-        default: 2,
-        min: 0,
-        max: 24,
-      },
-    },
-
-    // ========== NOTIFICATION PREFERENCES ==========
+    // Notifications
     notificationPreferences: {
       email: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
-      desktop: { type: Boolean, default: false },
-      taskReminder: { type: Boolean, default: true },
-      taskReminderTime: {
+      taskUpdates: { type: Boolean, default: true },
+      projectUpdates: { type: Boolean, default: true },
+      systemUpdates: { type: Boolean, default: true },
+      marketing: { type: Boolean, default: false },
+    },
+    // Settings
+    settings: {
+      theme: {
         type: String,
-        default: "09:00",
-        match: /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/,
+        enum: ["light", "dark", "system"],
+        default: "system",
       },
-      deadlineAlert: { type: Boolean, default: true },
-      leaveApprovals: { type: Boolean, default: true },
-      teamUpdate: { type: Boolean, default: true },
-      dailyDigest: { type: Boolean, default: true },
-      weeklyReport: { type: Boolean, default: true },
-      mentionNotifications: { type: Boolean, default: true },
-      commentNotifications: { type: Boolean, default: true },
+      language: {
+        type: String,
+        default: "en",
+      },
+      timezone: {
+        type: String,
+        default: "UTC",
+      },
+      dateFormat: {
+        type: String,
+        default: "MM/DD/YYYY",
+      },
     },
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
   },
 );
 
-// ========== VIRTUAL FIELDS ==========
-userSchema.virtual("displayName").get(function () {
-  return this.fullName || this.email;
-});
-
-userSchema.virtual("departmentName").get(function () {
-  return this.departmentId?.name || "Not Assigned";
-});
-
-userSchema.virtual("isAdmin").get(function () {
-  return ["super_admin", "admin", "hr_manager"].includes(this.role);
-});
-
-userSchema.virtual("isManager").get(function () {
-  return ["dept_manager", "project_manager", "line_manager"].includes(
-    this.role,
-  );
-});
-
-// ========== INDEXES ==========
+// Indexes for better query performance
 userSchema.index({ email: 1 });
-userSchema.index({ employeeId: 1 });
-userSchema.index({ departmentId: 1 });
-userSchema.index({ role: 1 });
+userSchema.index({ roles: 1 });
+userSchema.index({ department: 1 });
+userSchema.index({ "employment.manager": 1 });
 userSchema.index({ isActive: 1 });
-userSchema.index({ firstLogin: 1 });
-userSchema.index({ onboardingCompleted: 1 });
 
-// ========== METHODS ==========
-userSchema.methods.toProfileJSON = function () {
-  return {
-    _id: this._id,
-    fullName: this.fullName,
-    email: this.email,
-    employeeId: this.employeeId,
-    phoneNumber: this.phoneNumber,
-    profilePhoto: this.profilePhoto,
-    role: this.role,
-    position: this.position,
-    location: this.location,
-    bio: this.bio,
-    website: this.website,
-    departmentId: this.departmentId,
-    socialLinks: this.socialLinks,
-    address: this.address,
-    emergencyContact: this.emergencyContact,
-    skills: this.skills,
-    languages: this.languages,
-    achievements: this.achievements,
-    workSettings: this.workSettings,
-    notificationPreferences: this.notificationPreferences,
-    onboardingCompleted: this.onboardingCompleted,
-    isActive: this.isActive,
-    lastLogin: this.lastLogin,
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt,
-  };
+// Hash password before saving
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Compare password method
+userSchema.methods.comparePassword = async function (candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// ========== STATIC METHODS ==========
-userSchema.statics.findByEmail = function (email) {
-  return this.findOne({ email: email.toLowerCase() });
+// Get full role names method
+userSchema.methods.getRoleNames = async function () {
+  if (this.roles && this.roles.length > 0) {
+    await this.populate("roles");
+    return this.roles.map((r) => r.name);
+  }
+  return [this.role];
 };
 
-userSchema.statics.findActive = function () {
-  return this.find({ isActive: true });
+// Get primary role name
+userSchema.methods.getPrimaryRole = async function () {
+  if (this.roles && this.roles.length > 0) {
+    await this.populate("roles");
+    const primaryRole = this.roles.find(
+      (r) => r.code.toLowerCase() === this.role,
+    );
+    return primaryRole ? primaryRole.name : this.role;
+  }
+  return this.role;
 };
 
-userSchema.statics.findOnboardingIncomplete = function () {
-  return this.find({ onboardingCompleted: false, firstLogin: true });
+module.exports = { User: mongoose.model("User", userSchema) };
+
+// src/models/User.model.js - add this method
+userSchema.methods.hasRole = function(roleCode) {
+  // Check legacy role field
+  if (this.role === roleCode) {
+    return true;
+  }
+  
+  // Check roles array
+  if (this.roles && this.roles.length > 0) {
+    // If roles are populated
+    if (typeof this.roles[0] === 'object' && this.roles[0].code) {
+      return this.roles.some(r => r.code.toLowerCase() === roleCode.toLowerCase());
+    }
+    // If roles are just ObjectIds, we need to populate first
+  }
+  
+  return false;
 };
 
-// ========== FIX: Check if model exists before creating ==========
-let User;
-try {
-  User = mongoose.model("User");
-} catch (error) {
-  User = mongoose.model("User", userSchema);
-}
-
-module.exports = {
-  User,
-  userRoles,
+// Add a method to check multiple roles
+userSchema.methods.hasAnyRole = function(roleCodes) {
+  return roleCodes.some(code => this.hasRole(code));
 };

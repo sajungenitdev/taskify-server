@@ -8,6 +8,9 @@ const {
   deleteRole,
   seedRoles,
   getPermanentRoles,
+  assignRolesToUser,
+  removeRoleFromUser,
+  getUserRoles,
 } = require("../controllers/role.controller");
 
 const router = express.Router();
@@ -19,10 +22,17 @@ router.get("/", getRoles);
 router.get("/permanent", getPermanentRoles);
 router.get("/:id", getRoleById);
 
+// User role management routes
+router.get("/user/:userId", getUserRoles);
+
+// router.put("/user/:userId/assign", requireRole("super_admin, admin"), assignRolesToUser);
+router.put("/user/:userId/assign", requireRole("super_admin", "admin"), assignRolesToUser);
+router.delete("/user/:userId/role/:roleId", requireRole("super_admin, admin"), removeRoleFromUser);
+
 // Admin only routes
-router.post("/", requireRole("super_admin"), createRole);
-router.put("/:id", requireRole("super_admin"), updateRole);
-router.delete("/:id", requireRole("super_admin"), deleteRole);
+router.post("/", requireRole("super_admin, admin"), createRole);
+router.put("/:id", requireRole("super_admin, admin"), updateRole);
+router.delete("/:id", requireRole("super_admin, admin"), deleteRole);
 router.post("/seed", requireRole("super_admin"), seedRoles);
 
 module.exports = router;

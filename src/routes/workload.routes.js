@@ -1,19 +1,24 @@
-// routes/workload.routes.js
+// src/routes/workload.routes.js
 const express = require("express");
-const router = express.Router();
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
-  getTeamWorkload,
-  getIndividualWorkload,
+  getWorkloadCapacity,
+  getUserWorkload,
+  getWorkloadSummary,
 } = require("../controllers/workload.controller");
+
+const router = express.Router();
 
 // All routes require authentication
 router.use(authenticate);
 
-// Get team workload capacity dashboard
-router.get("/capacity", getTeamWorkload);
+// Get workload capacity for all users (admins only)
+router.get("/capacity", requireRole("super_admin", "admin", "hr_manager"), getWorkloadCapacity);
 
-// Get individual workload details
-router.get("/individual/:userId", getIndividualWorkload);
+// Get workload for a specific user
+router.get("/user/:userId", getUserWorkload);
+
+// Get workload summary for dashboard (admins only)
+router.get("/summary", requireRole("super_admin", "admin", "hr_manager", "dept_manager"), getWorkloadSummary);
 
 module.exports = router;

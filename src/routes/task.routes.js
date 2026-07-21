@@ -139,43 +139,21 @@ router.post(
 // Get extension requests - specific route
 router.get("/:id/extension-requests", authenticate, getExtensionRequests);
 
-// ============= /:id routes - MUST COME LAST =============
-// Get task by ID - dynamic route
-router.get("/:id", getTaskById);
 
-// Update task
-router.put("/:id", updateTask);
+
 
 // Update task status
 router.patch(
   "/:id/status",
   [
-    body("status")
-      .isIn([
-        "pending",
-        "in_progress",
-        "submitted",
-        "completed",
-        "overdue",
-        "rejected",
-      ])
-      .withMessage("Invalid status value"),
-    body("rejectionReason")
-      .optional()
-      .isString()
-      .withMessage("Rejection reason must be a string"),
-    body("approvalNote")
-      .optional()
-      .isString()
-      .withMessage("Approval note must be a string"),
-    body("evidenceUrls")
-      .optional()
-      .isArray()
-      .withMessage("evidenceUrls must be an array"),
-    body("evidenceUrls.*")
-      .optional()
-      .isURL()
-      .withMessage("Each URL must be valid"),
+    body("status").isIn([
+      "pending",
+      "in_progress",
+      "submitted",
+      "completed",
+      "overdue",
+      "rejected",
+    ]).withMessage("Invalid status value"),
   ],
   updateTaskStatus,
 );
@@ -234,7 +212,9 @@ router.put("/:id/reviews/:reviewId", updateReview);
 router.delete("/:id/reviews/:reviewId", deleteReview);
 router.post("/:id/reviews/:reviewId/respond", respondToReview);
 
-// ============= DELETE TASK =============
+// ============= /:id routes - MUST COME LAST =============
+router.get("/:id", getTaskById);
+router.put("/:id", updateTask);
 router.delete("/:id", requireRole("admin", "dept_manager"), deleteTask);
 
 module.exports = router;
