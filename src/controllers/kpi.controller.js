@@ -7,6 +7,24 @@ const { Task } = require("../models/Task.model");
 const mongoose = require("mongoose");
 
 // ============================================================
+// CONSTANTS - Define months array at the top
+// ============================================================
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+
+// ============================================================
 // KPI WEIGHT MANAGEMENT
 // ============================================================
 
@@ -342,7 +360,6 @@ const calculateEmployeeScores = async (
     totalTasks > 0 ? Math.round((onTimeTasks.length / totalTasks) * 100) : 0;
 
   // 4. Collaboration Score (based on team interactions, comments, etc.)
-  // Simplified: use average of tasks with comments
   const tasksWithComments = tasks.filter((t) => t.commentsCount > 0);
   const collaborationScore =
     totalTasks > 0
@@ -350,7 +367,6 @@ const calculateEmployeeScores = async (
       : 0;
 
   // 5. Innovation Score (based on new ideas, suggestions, etc.)
-  // Simplified: use tasks with evidence of innovation
   const innovativeTasks = tasks.filter(
     (t) => t.evidenceUrls && t.evidenceUrls.length > 0,
   );
@@ -547,151 +563,122 @@ const getDepartmentKPIScores = async (req, res) => {
   }
 };
 
-// Get monthly KPI report (all departments)
-// controllers/kpi.controller.js - Updated getMonthlyKPIReport function
-
-// Get monthly KPI report (all departments)
+// ============================================================
+// GET MONTHLY KPI REPORT - FIXED with MONTHS constant
+// ============================================================
 const getMonthlyKPIReport = async (req, res) => {
   try {
     const { month, year } = req.query;
+    const user = req.user;
 
+    console.log("📊 Fetching KPI report for:", { month, year });
+
+    // Validate required parameters
     if (!month || !year) {
-      return res.status(400).json({
-        success: false,
-        message: "Month and year are required",
+      // If no month/year provided, use current month
+      const now = new Date();
+      const currentMonth = now.getMonth() + 1;
+      const currentYear = now.getFullYear();
+      
+      console.log(`📊 Using current month: ${currentMonth}/${currentYear}`);
+      
+      // Use current month/year
+      const monthIndex = currentMonth;
+      const yearNum = currentYear;
+      
+      // Get all KPI scores for the current month
+      const startDate = new Date(yearNum, monthIndex - 1, 1);
+      const endDate = new Date(yearNum, monthIndex, 0, 23, 59, 59, 999);
+      
+      const kpiScores = await KPIScore.find({
+        userId: { $ne: null },
+        calculatedAt: { $gte: startDate, $lte: endDate },
+      })
+        .populate("userId", "fullName email employeeId role")
+        .populate("departmentId", "name code")
+        .sort({ totalScore: -1 })
+        .lean();
+
+      // Calculate distribution
+      const distribution = {
+        excellent: 0,
+        good: 0,
+        average: 0,
+        needs_improvement: 0,
+      };
+      
+      kpiScores.forEach((score) => {
+        if (score.performanceLevel === "excellent") distribution.excellent++;
+        else if (score.performanceLevel === "good") distribution.good++;
+        else if (score.performanceLevel === "average") distribution.average++;
+        else if (score.performanceLevel === "needs_improvement") distribution.needs_improvement++;
       });
-    }
 
-    const monthStr = `${year}-${String(month).padStart(2, "0")}`;
-    const yearNum = parseInt(year);
-
-    // Get all scores for the month
-    const scores = await KPIScore.find({
-      month: monthStr,
-      year: yearNum,
-    })
-      .populate("userId", "fullName email employeeId role")
-      .populate("departmentId", "name code")
-      .sort({ totalScore: -1 });
-
-    // If no scores found, return empty data structure
-    if (!scores || scores.length === 0) {
       return res.json({
         success: true,
         data: {
-          month: monthStr,
+          allScores: kpiScores,
+          distribution,
+          total: kpiScores.length,
+          month: MONTHS[monthIndex - 1], // FIXED: Use MONTHS constant
           year: yearNum,
-          totalEmployees: 0,
-          overallAverage: 0,
-          distribution: {
-            excellent: 0,
-            good: 0,
-            average: 0,
-            needs_improvement: 0,
-          },
-          departmentAverages: [],
-          topPerformers: [],
-          allScores: [],
         },
       });
     }
 
-    // Group by department
-    const departmentMap = new Map();
-    scores.forEach((score) => {
-      const deptId = score.departmentId?._id?.toString() || "unknown";
-      if (!departmentMap.has(deptId)) {
-        departmentMap.set(deptId, {
-          department: score.departmentId || {
-            _id: deptId,
-            name: "Unknown",
-            code: "UNK",
-          },
-          scores: [],
-          totalScore: 0,
-          employeeCount: 0,
-        });
-      }
-      const dept = departmentMap.get(deptId);
-      dept.scores.push(score);
-      dept.totalScore += score.totalScore;
-      dept.employeeCount++;
-    });
+    const monthIndex = parseInt(month);
+    const yearNum = parseInt(year);
 
-    // Calculate department averages
-    const departmentAverages = Array.from(departmentMap.values()).map(
-      (dept) => ({
-        department: dept.department.name || "Unknown",
-        departmentId: dept.department._id || "unknown",
-        averageScore:
-          dept.employeeCount > 0
-            ? Math.round(dept.totalScore / dept.employeeCount)
-            : 0,
-        employeeCount: dept.employeeCount,
-        topPerformer: dept.scores[0]?.userId?.fullName || "N/A",
-      }),
-    );
+    if (isNaN(monthIndex) || isNaN(yearNum) || monthIndex < 1 || monthIndex > 12) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid month or year. Month must be 1-12 and year must be a valid number.",
+      });
+    }
 
-    // Overall statistics
-    const totalEmployees = scores.length;
-    const overallAverage =
-      totalEmployees > 0
-        ? Math.round(
-            scores.reduce((sum, s) => sum + s.totalScore, 0) / totalEmployees,
-          )
-        : 0;
+    // Get all KPI scores for the specified month
+    const startDate = new Date(yearNum, monthIndex - 1, 1);
+    const endDate = new Date(yearNum, monthIndex, 0, 23, 59, 59, 999);
+    
+    const kpiScores = await KPIScore.find({
+      userId: { $ne: null },
+      calculatedAt: { $gte: startDate, $lte: endDate },
+    })
+      .populate("userId", "fullName email employeeId role")
+      .populate("departmentId", "name code")
+      .sort({ totalScore: -1 })
+      .lean();
 
+    // Calculate distribution
     const distribution = {
-      excellent: scores.filter((s) => s.performanceLevel === "excellent")
-        .length,
-      good: scores.filter((s) => s.performanceLevel === "good").length,
-      average: scores.filter((s) => s.performanceLevel === "average").length,
-      needs_improvement: scores.filter(
-        (s) => s.performanceLevel === "needs_improvement",
-      ).length,
+      excellent: 0,
+      good: 0,
+      average: 0,
+      needs_improvement: 0,
     };
-
-    // Top performers
-    const topPerformers = scores.slice(0, 10).map((s) => ({
-      name: s.userId?.fullName || "Unknown",
-      department: s.departmentId?.name || "Unknown",
-      score: s.totalScore,
-      level: s.performanceLevel,
-    }));
+    
+    kpiScores.forEach((score) => {
+      if (score.performanceLevel === "excellent") distribution.excellent++;
+      else if (score.performanceLevel === "good") distribution.good++;
+      else if (score.performanceLevel === "average") distribution.average++;
+      else if (score.performanceLevel === "needs_improvement") distribution.needs_improvement++;
+    });
 
     res.json({
       success: true,
       data: {
-        month: monthStr,
-        year: yearNum,
-        totalEmployees,
-        overallAverage,
+        allScores: kpiScores,
         distribution,
-        departmentAverages,
-        topPerformers,
-        allScores: scores,
+        total: kpiScores.length,
+        month: MONTHS[monthIndex - 1], // FIXED: Use MONTHS constant
+        year: yearNum,
       },
     });
   } catch (error) {
     console.error("Get monthly KPI report error:", error);
-    // Return empty data structure instead of error
-    res.json({
-      success: true,
-      data: {
-        month: `${year}-${String(month).padStart(2, "0")}`,
-        year: parseInt(year),
-        totalEmployees: 0,
-        overallAverage: 0,
-        distribution: {
-          excellent: 0,
-          good: 0,
-          average: 0,
-          needs_improvement: 0,
-        },
-        departmentAverages: [],
-        topPerformers: [],
-        allScores: [],
-      },
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
     });
   }
 };

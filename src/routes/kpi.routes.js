@@ -1,4 +1,5 @@
-// routes/kpi.routes.js - Add error handling middleware
+// routes/kpi.routes.js - Updated
+
 const express = require("express");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -21,17 +22,14 @@ router.use(authenticate);
 // KPI WEIGHT MANAGEMENT
 // ============================================================
 
-// Get all KPI weights (admin only)
 router.get(
   "/weights",
   requireRole("admin", "super_admin", "hr_manager"),
   getAllKPIWeights,
 );
 
-// Get KPI weights for a department
 router.get("/weights/:departmentId", getKPIWeights);
 
-// Create or update KPI weights for a department
 router.put(
   "/weights/:departmentId",
   requireRole("admin", "super_admin", "hr_manager", "dept_manager"),
@@ -42,7 +40,6 @@ router.put(
 // KPI CALCULATION
 // ============================================================
 
-// Calculate KPI scores for a department
 router.post(
   "/calculate/:departmentId",
   requireRole("admin", "super_admin", "hr_manager", "dept_manager"),
@@ -53,6 +50,7 @@ router.post(
 // KPI SCORE RETRIEVAL
 // ============================================================
 
+// IMPORTANT: Specific routes must come BEFORE dynamic routes
 // Get employee KPI scores
 router.get("/employee/:userId", getEmployeeKPIScores);
 
@@ -62,7 +60,17 @@ router.get("/employee/:userId/trend", getKPITrend);
 // Get department KPI scores
 router.get("/department/:departmentId", getDepartmentKPIScores);
 
-// Get monthly KPI report - THIS MUST COME AFTER SPECIFIC ROUTES
+// ============================================================
+// MONTHLY REPORT - This must be AFTER specific routes
+// But BEFORE the catch-all route
+// ============================================================
+
+// Get monthly KPI report with optional month/year params
+// If no params provided, uses current month
 router.get("/report/monthly", getMonthlyKPIReport);
+
+// Get KPI weights - moved here to avoid conflict
+// This is a catch-all route for anything not matched above
+// But we already have specific routes above
 
 module.exports = router;
