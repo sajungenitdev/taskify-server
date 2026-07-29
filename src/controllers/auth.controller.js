@@ -435,17 +435,14 @@ const register = async (req, res) => {
       }
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
     // Generate employee ID if not provided
     const finalEmployeeId = employeeId || `EMP${Date.now()}`;
 
-    // Create user
+    // Create user - DON'T hash password here, let the pre-save hook handle it
     const user = await User.create({
       fullName,
       email: email.toLowerCase(),
-      password: hashedPassword,
+      password: password, // ← Plain text password
       employeeId: finalEmployeeId,
       role: userRole,
       roles: roleId ? [roleId] : [],
@@ -479,7 +476,6 @@ const register = async (req, res) => {
     });
   }
 };
-
 // ============ UPDATE USER (Admin only) ============
 const updateUser = async (req, res) => {
   try {
@@ -717,6 +713,63 @@ const changePassword = async (req, res) => {
   }
 };
 
+// ============ CHANGE USER PASSWORD (Admin only) ============
+const changeUserPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password is required",
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 6 characters long",
+      });
+    }
+
+    // Find the user
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    
+    // Optional: Force password change on next login
+    user.firstLogin = true;
+    
+    await user.save();
+
+    // Log the action (optional)
+    console.log(`Password changed for user ${user.email} by admin ${req.user.email}`);
+
+    res.json({
+      success: true,
+      message: `Password changed successfully for ${user.fullName}`,
+      data: {
+        userId: user._id,
+        email: user.email,
+      }
+    });
+  } catch (error) {
+    console.error("Change user password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
 // ============ COMPLETE ONBOARDING ============
 const completeOnboarding = async (req, res) => {
   try {
@@ -1187,6 +1240,7 @@ module.exports = {
   forgotPassword,
   resetPassword,
   changePassword,
+  changeUserPassword,
   completeOnboarding,
   getAllUsers,
   getMe,

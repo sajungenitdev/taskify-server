@@ -5,7 +5,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
 console.log("✅ DNS servers set");
 
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcryptjs"); // ← ADD THIS
 const dotenv = require("dotenv");
 const path = require("path");
 
@@ -15,10 +15,10 @@ dotenv.config({ path: path.join(__dirname, "..", ".env") });
 console.log(`📁 Project root: ${path.join(__dirname, "..")}`);
 
 // Import models
-const User = require("../src/models/User.model");
+const { User } = require("../src/models/User.model");
 
 // ============================================================================
-// SEED FUNCTION - Simplified version
+// SEED FUNCTION - Let Mongoose hash the password
 // ============================================================================
 
 const seedDatabase = async () => {
@@ -30,129 +30,179 @@ const seedDatabase = async () => {
       throw new Error("MONGODB_URI is not defined in .env file");
     }
 
-    const mongooseOptions = {
-      serverSelectionTimeoutMS: 30000,
-      socketTimeoutMS: 45000,
-      connectTimeoutMS: 30000,
-      maxPoolSize: 10,
-    };
-
-    await mongoose.connect(process.env.MONGODB_URI, mongooseOptions);
+    await mongoose.connect(process.env.MONGODB_URI);
     console.log("✅ Connected to MongoDB\n");
 
-    // ========================================================================
-    // 1. CLEAR EXISTING DATA
-    // ========================================================================
+    // Clear existing data
     console.log("🗑️  Clearing existing users...");
-    
-    try {
-      await User.deleteMany({});
-      console.log("  ✅ Users cleared");
-    } catch (error) {
-      console.warn("  ⚠️ Could not clear users:", error.message);
-    }
+    await User.deleteMany({});
+    console.log("  ✅ Users cleared\n");
 
-    // ========================================================================
-    // 2. HASH PASSWORD
-    // ========================================================================
-    const hashedPassword = await bcrypt.hash("Admin@123", 10);
-    console.log("🔐 Password hashed\n");
+    // Define users with plain text passwords
+    console.log("👤 Creating users with email as password...");
 
-    // ========================================================================
-    // 3. CREATE USERS
-    // ========================================================================
-    console.log("👤 Creating users...");
-
-    const users = [
+    const userDataList = [
       {
         fullName: "System Super Admin",
         email: "superadmin@taskmanager.com",
-        password: hashedPassword,
+        password: "superadmin@taskmanager.com",
         employeeId: "SA001",
         role: "super_admin",
         isActive: true,
         firstLogin: false,
+        isVerified: true,
+        isEmailVerified: true,
       },
       {
         fullName: "System Admin",
         email: "admin@taskmanager.com",
-        password: hashedPassword,
+        password: "admin@taskmanager.com",
         employeeId: "AD001",
         role: "admin",
         isActive: true,
         firstLogin: false,
+        isVerified: true,
+        isEmailVerified: true,
       },
       {
         fullName: "HR Manager",
         email: "hr@taskmanager.com",
-        password: hashedPassword,
+        password: "hr@taskmanager.com",
         employeeId: "HR001",
         role: "hr_manager",
         isActive: true,
         firstLogin: false,
+        isVerified: true,
+        isEmailVerified: true,
       },
       {
         fullName: "Department Manager",
         email: "manager@taskmanager.com",
-        password: hashedPassword,
+        password: "manager@taskmanager.com",
         employeeId: "MGR001",
         role: "dept_manager",
         isActive: true,
         firstLogin: false,
+        isVerified: true,
+        isEmailVerified: true,
       },
       {
         fullName: "Project Manager",
         email: "pm@taskmanager.com",
-        password: hashedPassword,
+        password: "pm@taskmanager.com",
         employeeId: "PM001",
         role: "project_manager",
         isActive: true,
         firstLogin: false,
+        isVerified: true,
+        isEmailVerified: true,
+      },
+      {
+        fullName: "Line Manager",
+        email: "linemanager@taskmanager.com",
+        password: "linemanager@taskmanager.com",
+        employeeId: "LM001",
+        role: "line_manager",
+        isActive: true,
+        firstLogin: false,
+        isVerified: true,
+        isEmailVerified: true,
       },
       {
         fullName: "John Employee",
         email: "employee@taskmanager.com",
-        password: hashedPassword,
+        password: "employee@taskmanager.com",
         employeeId: "EMP001",
         role: "employee",
         isActive: true,
         firstLogin: true,
+        isVerified: true,
+        isEmailVerified: true,
+      },
+      {
+        fullName: "Jane Developer",
+        email: "jane@taskmanager.com",
+        password: "jane@taskmanager.com",
+        employeeId: "EMP002",
+        role: "employee",
+        isActive: true,
+        firstLogin: true,
+        isVerified: true,
+        isEmailVerified: true,
+      },
+      {
+        fullName: "Alice HR Specialist",
+        email: "alice@taskmanager.com",
+        password: "alice@taskmanager.com",
+        employeeId: "EMP003",
+        role: "employee",
+        isActive: true,
+        firstLogin: true,
+        isVerified: true,
+        isEmailVerified: true,
+      },
+      {
+        fullName: "Bob Business Analyst",
+        email: "bob@taskmanager.com",
+        password: "bob@taskmanager.com",
+        employeeId: "EMP004",
+        role: "employee",
+        isActive: true,
+        firstLogin: true,
+        isVerified: true,
+        isEmailVerified: true,
       },
     ];
 
     let created = 0;
-    for (const userData of users) {
-      try {
-        // Check if user exists
-        const existing = await User.findOne({ email: userData.email });
-        if (existing) {
-          console.log(`  ⏭️  Skipped: ${userData.email} (already exists)`);
-          continue;
-        }
+    let failed = 0;
 
+    for (const userData of userDataList) {
+      try {
+        // Create user - let the pre-save hook handle password hashing
         const user = await User.create(userData);
-        console.log(`  ✅ Created: ${user.fullName} (${user.email})`);
+        console.log(`  ✅ Created: ${user.fullName} (${user.email}) - Role: ${user.role}`);
         created++;
       } catch (error) {
         console.error(`  ❌ Failed to create ${userData.email}:`, error.message);
+        failed++;
       }
     }
 
-    // ========================================================================
-    // 4. OUTPUT SUMMARY
-    // ========================================================================
+    // Verify users and test passwords
+    console.log("\n🔐 Verifying passwords...");
+    for (const userData of userDataList) {
+      try {
+        const user = await User.findOne({ email: userData.email }).select("+password");
+        if (user) {
+          const isValid = await bcrypt.compare(userData.password, user.password);
+          console.log(`  ${userData.email}: ${isValid ? '✅ Password valid' : '❌ Password invalid'}`);
+        } else {
+          console.log(`  ${userData.email}: ❌ User not found`);
+        }
+      } catch (error) {
+        console.log(`  ${userData.email}: ❌ Error verifying - ${error.message}`);
+      }
+    }
+
+    const totalUsers = await User.countDocuments();
+    console.log(`\n📊 Total users in database: ${totalUsers}`);
+
     console.log("\n========================================");
     console.log("✅ Database seeded successfully!");
-    console.log(`   Created ${created} users`);
+    console.log(`   Created: ${created} users`);
+    console.log(`   Failed: ${failed} users`);
+    console.log(`   Total: ${totalUsers} users`);
     console.log("========================================");
     console.log("\n🔐 LOGIN CREDENTIALS:");
     console.log("========================================");
-    console.log("Super Admin:   superadmin@taskmanager.com / Admin@123");
-    console.log("Admin:         admin@taskmanager.com / Admin@123");
-    console.log("HR Manager:    hr@taskmanager.com / Admin@123");
-    console.log("Dept Manager:  manager@taskmanager.com / Admin@123");
-    console.log("Project Mgr:   pm@taskmanager.com / Admin@123");
-    console.log("Employee:      employee@taskmanager.com / Admin@123");
+    console.log("🔑 Password for each user = their email address");
+    console.log("========================================\n");
+    console.log("📋 User Accounts (Email / Password):");
+    console.log("----------------------------------------");
+    userDataList.forEach(u => {
+      console.log(`  ${u.email} / ${u.email}`);
+    });
     console.log("========================================\n");
 
     await mongoose.connection.close();
@@ -161,13 +211,6 @@ const seedDatabase = async () => {
   } catch (error) {
     console.error("❌ Seed error:", error);
     console.error("📚 Stack:", error.stack);
-
-    if (error.name === "MongooseServerSelectionError") {
-      console.log("\n💡 TROUBLESHOOTING:");
-      console.log("  1. Add your IP to MongoDB Atlas whitelist");
-      console.log("  2. Check your internet connection");
-      console.log("  3. Verify your MONGODB_URI in .env file");
-    }
     process.exit(1);
   }
 };

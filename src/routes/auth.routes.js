@@ -1,4 +1,4 @@
-// routes/auth.routes.js - Updated
+// routes/auth.routes.js - Complete Updated Version
 
 const express = require("express");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
@@ -9,6 +9,7 @@ const {
   updateMyProfile,
   uploadProfilePhoto,
   changePassword,
+  changeUserPassword, // ✅ Add this import
   getAllUsers,
   getUserProfile,
   updateUser,
@@ -40,6 +41,14 @@ router.put("/profile", updateMyProfile);
 router.post("/profile/photo", uploadProfile, uploadProfilePhoto);
 router.post("/change-password", changePassword);
 
+// ============ ADMIN CHANGE PASSWORD FOR ANY USER ============
+// ✅ ADD THIS ROUTE - Allows admin to change any user's password
+router.post(
+  "/users/:id/change-password",
+  requireRole("admin", "super_admin"),
+  changeUserPassword
+);
+
 // ============ EXPORT AND IMPORT ROUTES ============
 router.get(
   "/export",
@@ -48,12 +57,11 @@ router.get(
 );
 router.post(
   "/bulk-import",
-  requireRole("admin", "super_admin", "hr_manager", "employee"),
+  requireRole("admin", "super_admin", "hr_manager"),
   bulkImportUsers,
 );
 
 // ============ USER MANAGEMENT ROUTES ============
-// ✅ UPDATED: Allow all authenticated users with role-based filtering in controller
 router.get("/users", authenticate, getAllUsers);
 router.get("/users/active", authenticate, getActiveUsers);
 
