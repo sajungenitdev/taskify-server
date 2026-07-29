@@ -477,11 +477,22 @@ const register = async (req, res) => {
   }
 };
 // ============ UPDATE USER (Admin only) ============
+// ============ UPDATE USER (Admin only) ============
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, phoneNumber, role, isActive, department, employeeId } =
-      req.body;
+    const {
+      fullName,
+      phoneNumber,
+      role,
+      isActive,
+      department,
+      departmentId, // ← Add this
+      employeeId,
+      position,
+      location,
+      bio,
+    } = req.body;
 
     // Get current user to check department change
     const currentUser = await User.findById(id);
@@ -493,6 +504,9 @@ const updateUser = async (req, res) => {
     }
 
     const oldDepartment = currentUser.department?.toString();
+
+    // Use departmentId if provided, otherwise use department
+    const departmentToUse = departmentId || department;
 
     // If roles are being updated, handle the role field
     if (req.body.roles) {
@@ -509,8 +523,11 @@ const updateUser = async (req, res) => {
         phoneNumber,
         role,
         isActive,
-        department,
+        department: departmentToUse || null, // ← Use the combined field
         employeeId,
+        position,
+        location,
+        bio,
         ...(req.body.roles && { roles: req.body.roles }),
       },
       { new: true, runValidators: true },
@@ -527,7 +544,7 @@ const updateUser = async (req, res) => {
     }
 
     // ========== UPDATE DEPARTMENT COUNTS ==========
-    if (department && department !== oldDepartment) {
+    if (departmentToUse && departmentToUse !== oldDepartment) {
       const { Department } = require("../models/Department.model");
 
       // Update old department
@@ -538,8 +555,8 @@ const updateUser = async (req, res) => {
         }
       }
       // Update new department
-      if (department) {
-        const newDept = await Department.findById(department);
+      if (departmentToUse) {
+        const newDept = await Department.findById(departmentToUse);
         if (newDept) {
           await newDept.updateEmployeeCount();
         }
