@@ -696,8 +696,8 @@ const changePassword = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
+    // DON'T hash here - let the pre-save hook handle it
+    user.password = newPassword; // ← Plain text password
     await user.save();
 
     res.json({
@@ -742,17 +742,14 @@ const changeUserPassword = async (req, res) => {
       });
     }
 
-    // Hash the new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
-    
-    // Optional: Force password change on next login
+    // DON'T hash here - let the pre-save hook handle it
+    user.password = newPassword; // ← Plain text password
     user.firstLogin = true;
-    
     await user.save();
 
-    // Log the action (optional)
-    console.log(`Password changed for user ${user.email} by admin ${req.user.email}`);
+    console.log(
+      `Password changed for user ${user.email} by admin ${req.user.email}`,
+    );
 
     res.json({
       success: true,
@@ -760,7 +757,7 @@ const changeUserPassword = async (req, res) => {
       data: {
         userId: user._id,
         email: user.email,
-      }
+      },
     });
   } catch (error) {
     console.error("Change user password error:", error);
@@ -770,6 +767,7 @@ const changeUserPassword = async (req, res) => {
     });
   }
 };
+
 // ============ COMPLETE ONBOARDING ============
 const completeOnboarding = async (req, res) => {
   try {
