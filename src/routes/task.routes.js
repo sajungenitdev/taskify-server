@@ -139,9 +139,6 @@ router.post(
 // Get extension requests - specific route
 router.get("/:id/extension-requests", authenticate, getExtensionRequests);
 
-
-
-
 // Update task status
 router.patch(
   "/:id/status",
@@ -181,9 +178,20 @@ router.post(
   requestExtension,
 );
 
+// ============================================================
+// ✅ FIXED: Approve Extension - More inclusive roles
+// ============================================================
 router.post(
   "/:id/approve-extension/:extensionId",
-  requireRole("admin", "dept_manager", "line_manager"),
+  authenticate,
+  requireRole(
+    "admin",
+    "super_admin",   // ✅ ADD THIS
+    "hr_manager",
+    "dept_manager",
+    "project_manager",
+    "line_manager"
+  ),
   [
     body("newDeadline")
       .isISO8601()
@@ -191,6 +199,57 @@ router.post(
   ],
   approveExtension,
 );
+
+// ============================================================
+// ✅ OPTIONAL: Custom middleware for more flexible permissions
+// ============================================================
+// If you want to allow task creators/assignees to approve too:
+/*
+router.post(
+  "/:id/approve-extension/:extensionId",
+  authenticate,
+  async (req, res, next) => {
+    try {
+      const task = await Task.findById(req.params.id);
+      if (!task) {
+        return res.status(404).json({ success: false, message: "Task not found" });
+      }
+
+      const userRole = req.user.role;
+      const userId = req.user._id;
+
+      // Allow if user is admin/manager
+      const allowedRoles = ["admin", "dept_manager", "line_manager", "project_manager", "hr_manager", "super_admin"];
+      if (allowedRoles.includes(userRole)) {
+        return next();
+      }
+
+      // Allow if user is the task creator
+      if (task.createdBy && task.createdBy.toString() === userId.toString()) {
+        return next();
+      }
+
+      // Allow if user is the task assignee
+      if (task.assignedTo && task.assignedTo.toString() === userId.toString()) {
+        return next();
+      }
+
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You don't have permission to approve extension requests."
+      });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  [
+    body("newDeadline")
+      .isISO8601()
+      .withMessage("Valid new deadline is required"),
+  ],
+  approveExtension,
+);
+*/
 
 // ============= COMMENT ROUTES =============
 router.get("/:id/comments", getTaskComments);
@@ -216,6 +275,5 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 router.get("/:id", getTaskById);
 router.put("/:id", updateTask);
 router.delete("/:id", requireRole("admin", "dept_manager", "project_manager", "line_manager", "super_admin"), deleteTask);
-
 
 module.exports = router;
