@@ -215,6 +215,7 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 // ============= /:id routes - MUST COME LAST =============
 router.get("/:id", getTaskById);
 router.put("/:id", updateTask);
-router.delete("/:id", requireRole("admin", "dept_manager"), deleteTask);
+router.delete("/:id", requireRole("admin", "dept_manager", "project_manager", "line_manager", "super_admin"), deleteTask);
+
 
 module.exports = router;

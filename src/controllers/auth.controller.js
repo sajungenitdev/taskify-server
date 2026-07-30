@@ -1,3 +1,8 @@
+// controllers/auth.controller.js
+// ============================================================
+// COMPLETE AUTH CONTROLLER - FULLY FUNCTIONAL
+// ============================================================
+
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../models/User.model");
@@ -752,77 +757,6 @@ const changePassword = async (req, res) => {
     });
   }
 };
-// ============================================================
-// UPLOAD PROFILE PHOTO (Base64 Only)
-// ============================================================
-const uploadProfilePhoto = async (req, res) => {
-  try {
-    const { profilePhoto } = req.body;
-
-    // ✅ Validate base64 image
-    if (!profilePhoto) {
-      return res.status(400).json({
-        success: false,
-        message: "Profile photo (base64) is required",
-      });
-    }
-
-    // ✅ Check if it's a valid base64 image
-    if (!profilePhoto.startsWith('data:image/')) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid image format. Must be base64 data URL starting with 'data:image/'",
-      });
-    }
-
-    // ✅ Validate image size (optional - base64 string length)
-    const base64Size = Buffer.from(profilePhoto.split(',')[1] || '', 'base64').length;
-    const maxSize = 5 * 1024 * 1024; // 5MB
-    if (base64Size > maxSize) {
-      return res.status(400).json({
-        success: false,
-        message: "Image size too large. Maximum 5MB allowed.",
-      });
-    }
-
-    // ✅ Update user with base64 image
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      {
-        profilePhoto: profilePhoto,
-        avatar: profilePhoto,
-      },
-      { new: true },
-    ).select("-password");
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    let userObj = user.toObject();
-    userObj = ensureProfilePhoto(userObj);
-
-    res.json({
-      success: true,
-      message: "Profile photo updated successfully",
-      data: {
-        profilePhoto: userObj.profilePhoto,
-        avatar: userObj.avatar,
-      },
-    });
-  } catch (error) {
-    console.error("Upload photo error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error: " + error.message,
-    });
-  }
-};
-
-// controllers/auth.controller.js - UPDATE MY PROFILE (FIXED)
 
 // ============================================================
 // UPDATE MY PROFILE - COMPLETE FIX
@@ -857,9 +791,9 @@ const updateMyProfile = async (req, res) => {
       bio,
       position,
       location,
-      skills: skills?.length,
-      languages: languages?.length,
-      achievements: achievements?.length,
+      skills: skills?.length || 0,
+      languages: languages?.length || 0,
+      achievements: achievements?.length || 0,
       socialLinks: socialLinks ? Object.keys(socialLinks) : [],
       hasProfilePhoto: !!profilePhoto,
     });
@@ -876,6 +810,27 @@ const updateMyProfile = async (req, res) => {
     if (location !== undefined) updates.location = location;
     if (website !== undefined) updates.website = website;
     if (dailyHoursTarget !== undefined) updates.dailyHoursTarget = dailyHoursTarget;
+
+    // ✅ Address
+    if (address !== undefined) {
+      updates.address = {
+        street: address.street || '',
+        city: address.city || '',
+        state: address.state || '',
+        country: address.country || '',
+        zipCode: address.zipCode || '',
+      };
+    }
+
+    // ✅ Emergency Contact
+    if (emergencyContact !== undefined) {
+      updates.emergencyContact = {
+        name: emergencyContact.name || '',
+        relationship: emergencyContact.relationship || '',
+        phone: emergencyContact.phone || '',
+        email: emergencyContact.email || '',
+      };
+    }
 
     // ✅ Social Links - ensure it's an object
     if (socialLinks !== undefined) {
@@ -955,7 +910,8 @@ const updateMyProfile = async (req, res) => {
     )
       .select("-password")
       .populate("department", "name code")
-      .populate("roles", "name code level");
+      .populate("roles", "name code level")
+      .populate("employment.manager", "fullName email");
 
     if (!user) {
       return res.status(404).json({
@@ -984,7 +940,84 @@ const updateMyProfile = async (req, res) => {
 };
 
 // ============================================================
-// COMPLETE ONBOARDING (with Base64 support)
+// UPLOAD PROFILE PHOTO (Base64 Only)
+// ============================================================
+const uploadProfilePhoto = async (req, res) => {
+  try {
+    const { profilePhoto } = req.body;
+
+    // ✅ Validate base64 image
+    if (!profilePhoto) {
+      return res.status(400).json({
+        success: false,
+        message: "Profile photo (base64) is required",
+      });
+    }
+
+    // ✅ Check if it's a valid base64 image
+    if (!profilePhoto.startsWith('data:image/')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid image format. Must be base64 data URL starting with 'data:image/'",
+      });
+    }
+
+    // ✅ Validate image size
+    try {
+      const base64Data = profilePhoto.split(',')[1];
+      if (base64Data) {
+        const base64Size = Buffer.from(base64Data, 'base64').length;
+        const maxSize = 5 * 1024 * 1024; // 5MB
+        if (base64Size > maxSize) {
+          return res.status(400).json({
+            success: false,
+            message: "Image size too large. Maximum 5MB allowed.",
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Could not validate image size:", err);
+    }
+
+    // ✅ Update user with base64 image
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        profilePhoto: profilePhoto,
+        avatar: profilePhoto,
+      },
+      { new: true },
+    ).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
+
+    res.json({
+      success: true,
+      message: "Profile photo updated successfully",
+      data: {
+        profilePhoto: userObj.profilePhoto,
+        avatar: userObj.avatar,
+      },
+    });
+  } catch (error) {
+    console.error("Upload photo error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// COMPLETE ONBOARDING
 // ============================================================
 const completeOnboarding = async (req, res) => {
   try {
@@ -994,7 +1027,7 @@ const completeOnboarding = async (req, res) => {
       phoneNumber,
       dailyHoursTarget,
       notificationPreferences,
-      profilePhoto, // ✅ Base64 image
+      profilePhoto,
       position,
       employeeId,
       location,
@@ -1021,7 +1054,6 @@ const completeOnboarding = async (req, res) => {
     if (bio) updates.bio = bio;
     if (department) updates.department = department;
 
-    // ✅ Handle base64 profile photo
     if (profilePhoto) {
       if (!profilePhoto.startsWith('data:image/')) {
         return res.status(400).json({
