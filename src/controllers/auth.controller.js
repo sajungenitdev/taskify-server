@@ -262,9 +262,8 @@ const getMe = async (req, res) => {
   }
 };
 
-// ============================================================
-// REGISTER NEW USER (Admin only)
-// ============================================================
+// controllers/auth.controller.js - Updated register function
+
 const register = async (req, res) => {
   try {
     const {
@@ -314,13 +313,15 @@ const register = async (req, res) => {
       }
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // ✅ REMOVE THIS - Don't hash here, let the pre-save middleware handle it
+    // const hashedPassword = await bcrypt.hash(password, 10);
+    
     const finalEmployeeId = employeeId || `EMP${Date.now()}`;
 
     const userData = {
       fullName,
       email: email.toLowerCase(),
-      password: hashedPassword,
+      password: password, // ✅ Pass plain password - model will hash it
       employeeId: finalEmployeeId,
       role: userRole,
       roles: roleId ? [roleId] : [],
@@ -335,7 +336,7 @@ const register = async (req, res) => {
       userData.avatar = profilePhoto;
     }
 
-    const user = await User.create(userData);
+    const user = await User.create(userData); // ✅ pre-save middleware will hash the password
 
     if (department) {
       const { Department } = require("../models/Department.model");
@@ -758,9 +759,8 @@ const changePassword = async (req, res) => {
   }
 };
 
-// ============================================================
-// UPDATE MY PROFILE - COMPLETE FIX
-// ============================================================
+// controllers/auth.controller.js - updateMyProfile function
+
 const updateMyProfile = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -784,23 +784,8 @@ const updateMyProfile = async (req, res) => {
       profilePhoto,
     } = req.body;
 
-    console.log("📝 Updating profile for user:", userId);
-    console.log("📝 Received data:", {
-      fullName,
-      phoneNumber,
-      bio,
-      position,
-      location,
-      skills: skills?.length || 0,
-      languages: languages?.length || 0,
-      achievements: achievements?.length || 0,
-      socialLinks: socialLinks ? Object.keys(socialLinks) : [],
-      hasProfilePhoto: !!profilePhoto,
-    });
-
     const updates = {};
 
-    // ✅ Basic fields
     if (fullName !== undefined) updates.fullName = fullName;
     if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
     if (employeeId !== undefined) updates.employeeId = employeeId;
@@ -809,72 +794,71 @@ const updateMyProfile = async (req, res) => {
     if (position !== undefined) updates.position = position;
     if (location !== undefined) updates.location = location;
     if (website !== undefined) updates.website = website;
+    if (address !== undefined) updates.address = address;
+    if (emergencyContact !== undefined) updates.emergencyContact = emergencyContact;
     if (dailyHoursTarget !== undefined) updates.dailyHoursTarget = dailyHoursTarget;
 
-    // ✅ Address
-    if (address !== undefined) {
-      updates.address = {
-        street: address.street || '',
-        city: address.city || '',
-        state: address.state || '',
-        country: address.country || '',
-        zipCode: address.zipCode || '',
-      };
-    }
-
-    // ✅ Emergency Contact
-    if (emergencyContact !== undefined) {
-      updates.emergencyContact = {
-        name: emergencyContact.name || '',
-        relationship: emergencyContact.relationship || '',
-        phone: emergencyContact.phone || '',
-        email: emergencyContact.email || '',
-      };
-    }
-
-    // ✅ Social Links - ensure it's an object
+    // ✅ Handle socialLinks - ensure it's an object
     if (socialLinks !== undefined) {
-      updates.socialLinks = {
-        linkedin: socialLinks.linkedin || '',
-        github: socialLinks.github || '',
-        twitter: socialLinks.twitter || '',
-        facebook: socialLinks.facebook || '',
-        instagram: socialLinks.instagram || '',
-      };
+      if (typeof socialLinks === 'object' && !Array.isArray(socialLinks)) {
+        updates.socialLinks = socialLinks;
+      } else if (Array.isArray(socialLinks)) {
+        // If it's an array, convert to object with empty strings
+        const socialObj = {};
+        const platforms = ['linkedin', 'github', 'twitter', 'facebook', 'instagram'];
+        socialLinks.forEach(key => {
+          if (platforms.includes(key)) {
+            socialObj[key] = '';
+          }
+        });
+        updates.socialLinks = socialObj;
+      } else {
+        updates.socialLinks = {};
+      }
     }
 
-    // ✅ Skills - ensure it's an array
+    // ✅ Handle skills - ensure it's an array
     if (skills !== undefined) {
-      updates.skills = Array.isArray(skills) ? skills : [];
+      if (Array.isArray(skills)) {
+        updates.skills = skills.filter(s => typeof s === 'string' && s.trim());
+      } else {
+        updates.skills = [];
+      }
     }
 
-    // ✅ Languages - ensure it's an array
+    // ✅ Handle languages - ensure it's an array
     if (languages !== undefined) {
-      updates.languages = Array.isArray(languages) ? languages : [];
+      if (Array.isArray(languages)) {
+        updates.languages = languages.filter(l => typeof l === 'string' && l.trim());
+      } else {
+        updates.languages = [];
+      }
     }
 
-    // ✅ Achievements - ensure it's an array of objects
+    // ✅ Handle achievements - ensure it's an array of objects
     if (achievements !== undefined) {
-      updates.achievements = Array.isArray(achievements) ? achievements.map(a => ({
-        title: a.title || '',
-        date: a.date || new Date().toISOString().split('T')[0],
-        description: a.description || '',
-      })) : [];
+      if (Array.isArray(achievements)) {
+        updates.achievements = achievements.filter(a =>
+          typeof a === 'object' && a.title && a.description
+        );
+      } else {
+        updates.achievements = [];
+      }
     }
 
-    // ✅ Notification Preferences
+    // ✅ Handle notificationPreferences - ensure all fields exist
     if (notificationPreferences !== undefined) {
       updates.notificationPreferences = {
-        email: notificationPreferences.email !== undefined ? notificationPreferences.email : true,
-        push: notificationPreferences.push !== undefined ? notificationPreferences.push : true,
-        desktop: notificationPreferences.desktop !== undefined ? notificationPreferences.desktop : false,
-        taskReminder: notificationPreferences.taskReminder !== undefined ? notificationPreferences.taskReminder : true,
-        deadlineAlert: notificationPreferences.deadlineAlert !== undefined ? notificationPreferences.deadlineAlert : true,
-        teamUpdate: notificationPreferences.teamUpdate !== undefined ? notificationPreferences.teamUpdate : true,
+        email: notificationPreferences.email ?? true,
+        push: notificationPreferences.push ?? true,
+        desktop: notificationPreferences.desktop ?? false,
+        taskReminder: notificationPreferences.taskReminder ?? true,
+        deadlineAlert: notificationPreferences.deadlineAlert ?? true,
+        teamUpdate: notificationPreferences.teamUpdate ?? true,
       };
     }
 
-    // ✅ Profile Photo (Base64)
+    // ✅ Handle profilePhoto - validate base64
     if (profilePhoto !== undefined) {
       if (profilePhoto && !profilePhoto.startsWith('data:image/')) {
         return res.status(400).json({
@@ -886,22 +870,18 @@ const updateMyProfile = async (req, res) => {
       updates.avatar = profilePhoto;
     }
 
-    // ✅ Remove undefined values
+    // Remove undefined values
     Object.keys(updates).forEach(key => {
-      if (updates[key] === undefined || updates[key] === null) {
+      if (updates[key] === undefined) {
         delete updates[key];
       }
     });
 
-    // ✅ If no updates, return early
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No fields to update",
-      });
-    }
-
     console.log("📝 Applying updates:", Object.keys(updates));
+    console.log("📝 Skills:", updates.skills);
+    console.log("📝 Languages:", updates.languages);
+    console.log("📝 Achievements:", updates.achievements);
+    console.log("📝 Social Links:", updates.socialLinks);
 
     const user = await User.findByIdAndUpdate(
       userId,
@@ -910,8 +890,7 @@ const updateMyProfile = async (req, res) => {
     )
       .select("-password")
       .populate("department", "name code")
-      .populate("roles", "name code level")
-      .populate("employment.manager", "fullName email");
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(404).json({
@@ -923,22 +902,19 @@ const updateMyProfile = async (req, res) => {
     let userObj = user.toObject();
     userObj = ensureProfilePhoto(userObj);
 
-    console.log("✅ Profile updated successfully for:", userObj.email);
-
     res.json({
       success: true,
       message: "Profile updated successfully",
       data: userObj,
     });
   } catch (error) {
-    console.error("❌ Update profile error:", error);
+    console.error("Update profile error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
     });
   }
 };
-
 // ============================================================
 // UPLOAD PROFILE PHOTO (Base64 Only)
 // ============================================================
@@ -1378,6 +1354,69 @@ const bulkImportUsers = async (req, res) => {
   }
 };
 
+
+// ============================================================
+// CHANGE USER PASSWORD (Admin only)
+// ============================================================
+const changeUserPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    // ✅ Validate input
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password is required",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters long",
+      });
+    }
+
+    // ✅ Find the user
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // ✅ Prevent admin from changing their own password through this route
+    if (id === req.user._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: "Use the change-password endpoint to change your own password",
+      });
+    }
+
+    // ✅ Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    
+    // ✅ Optionally mark that password was changed
+    user.isPasswordChanged = true;
+    
+    await user.save();
+
+    // ✅ Send success response
+    res.json({
+      success: true,
+      message: `Password changed successfully for ${user.fullName}`,
+    });
+  } catch (error) {
+    console.error("Change user password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
 // ============================================================
 // EXPORTS
 // ============================================================
@@ -1401,4 +1440,5 @@ module.exports = {
   uploadProfilePhoto,
   exportUsers,
   bulkImportUsers,
+  changeUserPassword,
 };

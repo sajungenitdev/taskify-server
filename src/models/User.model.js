@@ -1,4 +1,5 @@
-// src/models/User.model.js
+// models/User.model.js - Add the missing fields
+
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
@@ -62,6 +63,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    phoneNumber: {
+      type: String,
+      trim: true,
+    },
     // ✅ Profile photo fields
     profilePhoto: {
       type: String,
@@ -76,6 +81,61 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // ✅ Bio
+    bio: {
+      type: String,
+      default: "",
+    },
+    // ✅ Location
+    location: {
+      type: String,
+      default: "",
+    },
+    // ✅ Website
+    website: {
+      type: String,
+      default: "",
+    },
+
+    // ============================================================
+    // ✅ NEW FIELDS - These are missing in your model!
+    // ============================================================
+
+    // ✅ Skills - Array of strings
+    skills: {
+      type: [String],
+      default: [],
+    },
+
+    // ✅ Languages - Array of strings
+    languages: {
+      type: [String],
+      default: [],
+    },
+
+    // ✅ Achievements - Array of objects
+    achievements: {
+      type: [{
+        title: { type: String, required: true },
+        date: { type: String, default: "" },
+        description: { type: String, required: true },
+      }],
+      default: [],
+    },
+
+    // ✅ Social Links - Object with specific fields
+    socialLinks: {
+      linkedin: { type: String, default: "" },
+      github: { type: String, default: "" },
+      twitter: { type: String, default: "" },
+      facebook: { type: String, default: "" },
+      instagram: { type: String, default: "" },
+    },
+
+    // ============================================================
+    // END NEW FIELDS
+    // ============================================================
+
     // Profile fields
     profile: {
       bio: { type: String, default: "" },
@@ -98,6 +158,7 @@ const userSchema = new mongoose.Schema(
         website: { type: String, default: "" },
       },
     },
+
     // Employment details
     employment: {
       joiningDate: { type: Date },
@@ -120,6 +181,7 @@ const userSchema = new mongoose.Schema(
         ref: "User",
       },
     },
+
     // Account status
     isActive: {
       type: Boolean,
@@ -151,6 +213,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       select: false,
     },
+
     // Reset password
     resetPasswordToken: {
       type: String,
@@ -160,15 +223,21 @@ const userSchema = new mongoose.Schema(
       type: Date,
       select: false,
     },
+
     // Notifications
     notificationPreferences: {
       email: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
+      desktop: { type: Boolean, default: false },
+      taskReminder: { type: Boolean, default: true },
+      deadlineAlert: { type: Boolean, default: true },
+      teamUpdate: { type: Boolean, default: true },
       taskUpdates: { type: Boolean, default: true },
       projectUpdates: { type: Boolean, default: true },
       systemUpdates: { type: Boolean, default: true },
       marketing: { type: Boolean, default: false },
     },
+
     // Settings
     settings: {
       theme: {

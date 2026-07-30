@@ -8,6 +8,7 @@ const {
   updateMyProfile,
   uploadProfilePhoto,
   changePassword,
+  changeUserPassword,
   getAllUsers,
   getUserProfile,
   updateUser,
@@ -185,6 +186,19 @@ router.delete("/users/:id", requireRole("super_admin"), deleteUser);
  * @access  Private (Super Admin only)
  */
 router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
+
+// ✅ ADD THIS ROUTE - Admin can change any user's password
+/**
+ * @route   POST /api/auth/users/:id/change-password
+ * @desc    Change user password by ID (Admin only)
+ * @access  Private (Admin, Super Admin, HR Manager only)
+ * @body    { newPassword: "string" }
+ */
+router.post(
+  "/users/:id/change-password",
+  requireRole("admin", "super_admin", "hr_manager"),
+  changeUserPassword
+);
 
 // ============================================================
 // EXPORT AND IMPORT ROUTES (Admin only)
