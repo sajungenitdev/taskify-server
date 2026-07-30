@@ -273,7 +273,12 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 
 // ============= /:id routes - MUST COME LAST =============
 router.get("/:id", getTaskById);
-router.put("/:id", updateTask);
-router.delete("/:id", requireRole("admin", "dept_manager", "project_manager", "line_manager", "super_admin"), deleteTask);
+router.put("/:id", authenticate, updateTask);
+router.delete(
+  "/:id",
+  authenticate,
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "line_manager"),
+  deleteTask
+);
 
 module.exports = router;
