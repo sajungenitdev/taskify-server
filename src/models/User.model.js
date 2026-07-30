@@ -26,7 +26,6 @@ const userSchema = new mongoose.Schema(
       minlength: [6, "Password must be at least 6 characters"],
       select: false,
     },
-    // Legacy single role (kept for backward compatibility)
     role: {
       type: String,
       default: "employee",
@@ -40,7 +39,6 @@ const userSchema = new mongoose.Schema(
         "employee",
       ],
     },
-    // New multiple roles support
     roles: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -64,9 +62,19 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    // ✅ Profile photo fields
+    profilePhoto: {
+      type: String,
+      default: "",
+    },
     avatar: {
       type: String,
       default: "",
+    },
+    // ✅ Onboarding status
+    onboardingCompleted: {
+      type: Boolean,
+      default: false,
     },
     // Profile fields
     profile: {
@@ -143,6 +151,15 @@ const userSchema = new mongoose.Schema(
       type: String,
       select: false,
     },
+    // Reset password
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      select: false,
+    },
     // Notifications
     notificationPreferences: {
       email: { type: Boolean, default: true },
@@ -178,7 +195,7 @@ const userSchema = new mongoose.Schema(
   },
 );
 
-// Indexes for better query performance
+// Indexes
 userSchema.index({ email: 1 });
 userSchema.index({ roles: 1 });
 userSchema.index({ department: 1 });
@@ -198,12 +215,11 @@ userSchema.pre("save", async function (next) {
   }
 });
 
-// Compare password method
+// Methods
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Get full role names method
 userSchema.methods.getRoleNames = async function () {
   if (this.roles && this.roles.length > 0) {
     await this.populate("roles");
@@ -212,7 +228,6 @@ userSchema.methods.getRoleNames = async function () {
   return [this.role];
 };
 
-// Get primary role name
 userSchema.methods.getPrimaryRole = async function () {
   if (this.roles && this.roles.length > 0) {
     await this.populate("roles");
@@ -224,28 +239,18 @@ userSchema.methods.getPrimaryRole = async function () {
   return this.role;
 };
 
-module.exports = { User: mongoose.model("User", userSchema) };
-
-// src/models/User.model.js - add this method
-userSchema.methods.hasRole = function(roleCode) {
-  // Check legacy role field
-  if (this.role === roleCode) {
-    return true;
-  }
-  
-  // Check roles array
+userSchema.methods.hasRole = function (roleCode) {
+  if (this.role === roleCode) return true;
   if (this.roles && this.roles.length > 0) {
-    // If roles are populated
     if (typeof this.roles[0] === 'object' && this.roles[0].code) {
       return this.roles.some(r => r.code.toLowerCase() === roleCode.toLowerCase());
     }
-    // If roles are just ObjectIds, we need to populate first
   }
-  
   return false;
 };
 
-// Add a method to check multiple roles
-userSchema.methods.hasAnyRole = function(roleCodes) {
+userSchema.methods.hasAnyRole = function (roleCodes) {
   return roleCodes.some(code => this.hasRole(code));
 };
+
+module.exports = { User: mongoose.model("User", userSchema) };

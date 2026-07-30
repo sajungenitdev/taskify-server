@@ -7,7 +7,9 @@ const crypto = require("crypto");
 const { sendEmail } = require("../config/email.config");
 const EmailTemplates = require("../services/emailTemplates.service");
 
-// ============ HELPER FUNCTIONS ============
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
 const generateToken = (user) => {
   return jwt.sign(
     {
@@ -23,43 +25,59 @@ const generateToken = (user) => {
 const sanitizeUser = (user) => {
   const userObj = user.toObject ? user.toObject() : { ...user };
   delete userObj.password;
+  delete userObj.resetPasswordToken;
+  delete userObj.resetPasswordExpires;
+  delete userObj.refreshToken;
   return userObj;
 };
 
-// ============ GET ACTIVE USERS ============
+const ensureProfilePhoto = (userObj) => {
+  if (!userObj.profilePhoto && userObj.avatar) {
+    userObj.profilePhoto = userObj.avatar;
+  }
+  return userObj;
+};
+
+// ============================================================
+// GET ACTIVE USERS
+// ============================================================
 const getActiveUsers = async (req, res) => {
   try {
     const users = await User.find({ isActive: true })
       .select("-password")
-      .populate("department", "name code") // Fixed: department instead of departmentId
-      .populate("roles", "name code level") // Added: populate roles
+      .populate("department", "name code")
+      .populate("roles", "name code level")
       .sort({ role: 1, fullName: 1 });
 
-    const formattedUsers = users.map((user) => ({
-      _id: user._id,
-      id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      role: user.role,
-      employeeId: user.employeeId,
-      department: user.department, // Fixed: department instead of departmentId
-      roles: user.roles || [],
-      isActive: user.isActive,
-      badge:
-        user.role === "super_admin"
-          ? "Full Access"
-          : user.role === "admin"
-            ? "Management"
-            : user.role === "hr_manager"
-              ? "HR Panel"
-              : user.role === "dept_manager"
-                ? "Team Lead"
-                : user.role === "project_manager"
-                  ? "Project Lead"
-                  : user.role === "line_manager"
-                    ? "Line Manager"
-                    : "Staff Access",
-    }));
+    const formattedUsers = users.map((user) => {
+      const userObj = user.toObject();
+      return {
+        _id: userObj._id,
+        id: userObj._id,
+        fullName: userObj.fullName,
+        email: userObj.email,
+        role: userObj.role,
+        employeeId: userObj.employeeId,
+        department: userObj.department,
+        roles: userObj.roles || [],
+        isActive: userObj.isActive,
+        profilePhoto: userObj.profilePhoto || userObj.avatar || null,
+        badge:
+          userObj.role === "super_admin"
+            ? "Full Access"
+            : userObj.role === "admin"
+              ? "Management"
+              : userObj.role === "hr_manager"
+                ? "HR Panel"
+                : userObj.role === "dept_manager"
+                  ? "Team Lead"
+                  : userObj.role === "project_manager"
+                    ? "Project Lead"
+                    : userObj.role === "line_manager"
+                      ? "Line Manager"
+                      : "Staff Access",
+      };
+    });
 
     res.json({
       success: true,
@@ -68,18 +86,17 @@ const getActiveUsers = async (req, res) => {
     });
   } catch (error) {
     console.error("Get active users error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error: " + error.message });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 };
 
-// ============ LOGIN ============
+// ============================================================
+// LOGIN
+// ============================================================
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Validate input
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -87,11 +104,10 @@ const login = async (req, res) => {
       });
     }
 
-    // Find user with password field
     const user = await User.findOne({ email: email.toLowerCase() })
       .select("+password")
-      .populate("department", "name code") // Fixed: department instead of departmentId
-      .populate("roles", "name code level"); // Added: populate roles
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(401).json({
@@ -100,16 +116,13 @@ const login = async (req, res) => {
       });
     }
 
-    // Check if user is active
     if (!user.isActive) {
       return res.status(401).json({
         success: false,
-        message:
-          "Your account has been deactivated. Please contact administrator.",
+        message: "Your account has been deactivated. Please contact administrator.",
       });
     }
 
-    // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -118,15 +131,12 @@ const login = async (req, res) => {
       });
     }
 
-    // Update last login
     user.lastLogin = new Date();
     await user.save();
 
-    // Generate token
     const token = generateToken(user);
-
-    // Prepare user response (without password)
-    const userResponse = sanitizeUser(user);
+    let userResponse = sanitizeUser(user);
+    userResponse = ensureProfilePhoto(userResponse);
 
     res.json({
       success: true,
@@ -147,7 +157,9 @@ const login = async (req, res) => {
   }
 };
 
-// ============ REFRESH TOKEN ============
+// ============================================================
+// REFRESH TOKEN
+// ============================================================
 const refreshToken = async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -194,7 +206,9 @@ const refreshToken = async (req, res) => {
   }
 };
 
-// ============ LOGOUT ============
+// ============================================================
+// LOGOUT
+// ============================================================
 const logout = async (req, res) => {
   try {
     res.json({
@@ -210,156 +224,15 @@ const logout = async (req, res) => {
   }
 };
 
-// ============ GET ALL USERS (Admin only) ============
-const getAllUsers = async (req, res) => {
-  try {
-    const user = req.user;
-    let query = {};
-
-    // ========== ROLE-BASED FILTERING ==========
-    if (
-      user.role === "super_admin" ||
-      user.role === "admin" ||
-      user.role === "hr_manager"
-    ) {
-      // Admins can see all users
-      // No additional filtering needed
-    } else if (user.role === "dept_manager") {
-      // Department managers can only see users in their department
-      if (user.department) {
-        query.department = user.department;
-      } else {
-        // If department manager has no department, return empty
-        return res.json({
-          success: true,
-          data: [],
-          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
-        });
-      }
-    } else if (user.role === "project_manager") {
-      // Project managers can see project team members
-      const projects = await Project.find({
-        projectManager: user._id,
-      }).select("teamMembers");
-
-      const teamMemberIds = projects.flatMap(
-        (p) => p.teamMembers?.map((m) => m.userId) || [],
-      );
-
-      // Add the project manager themselves
-      teamMemberIds.push(user._id);
-
-      if (teamMemberIds.length > 0) {
-        query._id = { $in: teamMemberIds };
-      } else {
-        // If no team members, return empty
-        return res.json({
-          success: true,
-          data: [],
-          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
-        });
-      }
-    } else if (user.role === "line_manager") {
-      // Line managers can only see their direct reports
-      const teamMembers = await User.find({ managerId: user._id }).select(
-        "_id",
-      );
-      const memberIds = teamMembers.map((m) => m._id);
-
-      // Add the line manager themselves
-      memberIds.push(user._id);
-
-      if (memberIds.length > 0) {
-        query._id = { $in: memberIds };
-      } else {
-        // If no team members, return empty
-        return res.json({
-          success: true,
-          data: [],
-          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
-        });
-      }
-    } else if (user.role === "employee") {
-      // Employees can only see themselves
-      query._id = user._id;
-    } else {
-      // Unknown role - only see themselves
-      query._id = user._id;
-    }
-    // ========== END ROLE-BASED FILTERING ==========
-
-    // Allow additional filtering by department
-    if (
-      req.query.department &&
-      (user.role === "super_admin" ||
-        user.role === "admin" ||
-        user.role === "hr_manager")
-    ) {
-      query.department = req.query.department;
-    }
-
-    // Allow filtering by role (admins only)
-    if (
-      req.query.role &&
-      (user.role === "super_admin" ||
-        user.role === "admin" ||
-        user.role === "hr_manager")
-    ) {
-      query.role = req.query.role;
-    }
-
-    // Allow search
-    if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, "i");
-      query.$or = [
-        { fullName: searchRegex },
-        { email: searchRegex },
-        { employeeId: searchRegex },
-      ];
-    }
-
-    // Pagination
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 100;
-    const skip = (page - 1) * limit;
-
-    const users = await User.find(query)
-      .select("-password")
-      .populate("department", "name code") // Fixed: department instead of departmentId
-      .populate("roles", "name code level") // Added: populate roles
-      .populate("employment.manager", "fullName email") // Fixed: employment.manager
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await User.countDocuments(query);
-
-    res.json({
-      success: true,
-      data: users,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error("Get all users error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error: " + error.message,
-    });
-  }
-};
-
-// ============ GET CURRENT USER ============
+// ============================================================
+// GET CURRENT USER
+// ============================================================
 const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
       .select("-password")
-      .populate("department", "name code") // Fixed: department instead of departmentId
-      .populate("roles", "name code level"); // Added: populate roles
+      .populate("department", "name code")
+      .populate("roles", "name code level");
 
     if (!user) {
       return res.status(404).json({
@@ -368,9 +241,12 @@ const getMe = async (req, res) => {
       });
     }
 
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
+
     res.json({
       success: true,
-      data: user,
+      data: userObj,
     });
   } catch (error) {
     console.error("Get me error:", error);
@@ -381,7 +257,9 @@ const getMe = async (req, res) => {
   }
 };
 
-// ============ REGISTER NEW USER (Admin only) ============
+// ============================================================
+// REGISTER NEW USER (Admin only)
+// ============================================================
 const register = async (req, res) => {
   try {
     const {
@@ -392,9 +270,9 @@ const register = async (req, res) => {
       role,
       department,
       phoneNumber,
+      profilePhoto,
     } = req.body;
 
-    // Validate required fields
     if (!fullName || !email || !password) {
       return res.status(400).json({
         success: false,
@@ -402,7 +280,6 @@ const register = async (req, res) => {
       });
     }
 
-    // Check if user exists
     const existingUser = await User.findOne({
       $or: [{ email: email.toLowerCase() }, { employeeId }],
     });
@@ -417,32 +294,25 @@ const register = async (req, res) => {
       });
     }
 
-    // Get default role if not provided
     let userRole = role || "employee";
     let roleId = null;
 
-    // If role is provided, find the role document
     if (role) {
       const roleDoc = await Role.findOne({ code: role.toUpperCase() });
       if (roleDoc) {
         roleId = roleDoc._id;
       }
     } else {
-      // Get default employee role
       const defaultRole = await Role.findOne({ code: "EMPLOYEE" });
       if (defaultRole) {
         roleId = defaultRole._id;
       }
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate employee ID if not provided
     const finalEmployeeId = employeeId || `EMP${Date.now()}`;
 
-    // Create user
-    const user = await User.create({
+    const userData = {
       fullName,
       email: email.toLowerCase(),
       password: hashedPassword,
@@ -453,9 +323,15 @@ const register = async (req, res) => {
       phoneNumber: phoneNumber || null,
       isActive: true,
       firstLogin: true,
-    });
+    };
 
-    // ========== UPDATE DEPARTMENT COUNT ==========
+    if (profilePhoto) {
+      userData.profilePhoto = profilePhoto;
+      userData.avatar = profilePhoto;
+    }
+
+    const user = await User.create(userData);
+
     if (department) {
       const { Department } = require("../models/Department.model");
       const dept = await Department.findById(department);
@@ -480,14 +356,173 @@ const register = async (req, res) => {
   }
 };
 
-// ============ UPDATE USER (Admin only) ============
+// ============================================================
+// GET ALL USERS
+// ============================================================
+const getAllUsers = async (req, res) => {
+  try {
+    const user = req.user;
+    let query = {};
+
+    // ========== ROLE-BASED FILTERING ==========
+    if (
+      user.role === "super_admin" ||
+      user.role === "admin" ||
+      user.role === "hr_manager"
+    ) {
+      // Can see all users
+    } else if (user.role === "dept_manager") {
+      if (user.department) {
+        query.department = user.department;
+      } else {
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
+        });
+      }
+    } else if (user.role === "project_manager") {
+      const projects = await Project.find({
+        projectManager: user._id,
+      }).select("teamMembers");
+
+      const teamMemberIds = projects.flatMap(
+        (p) => p.teamMembers?.map((m) => m.userId) || [],
+      );
+      teamMemberIds.push(user._id);
+
+      if (teamMemberIds.length > 0) {
+        query._id = { $in: teamMemberIds };
+      } else {
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
+        });
+      }
+    } else if (user.role === "line_manager") {
+      const teamMembers = await User.find({ managerId: user._id }).select("_id");
+      const memberIds = teamMembers.map((m) => m._id);
+      memberIds.push(user._id);
+
+      if (memberIds.length > 0) {
+        query._id = { $in: memberIds };
+      } else {
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: 1, limit: 100, total: 0, pages: 0 },
+        });
+      }
+    } else {
+      query._id = user._id;
+    }
+
+    // Additional filters
+    if (
+      req.query.department &&
+      (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")
+    ) {
+      query.department = req.query.department;
+    }
+
+    if (
+      req.query.role &&
+      (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")
+    ) {
+      query.role = req.query.role;
+    }
+
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, "i");
+      query.$or = [
+        { fullName: searchRegex },
+        { email: searchRegex },
+        { employeeId: searchRegex },
+      ];
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 100;
+    const skip = (page - 1) * limit;
+
+    const users = await User.find(query)
+      .select("-password")
+      .populate("department", "name code")
+      .populate("roles", "name code level")
+      .populate("employment.manager", "fullName email")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await User.countDocuments(query);
+
+    const usersWithPhoto = users.map((u) => {
+      const obj = u.toObject();
+      return ensureProfilePhoto(obj);
+    });
+
+    res.json({
+      success: true,
+      data: usersWithPhoto,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("Get all users error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// GET USER PROFILE BY ID
+// ============================================================
+const getUserProfile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id)
+      .select("-password")
+      .populate("department", "name code")
+      .populate("roles", "name code level");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
+
+    res.json({
+      success: true,
+      data: userObj,
+    });
+  } catch (error) {
+    console.error("Get user profile error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// UPDATE USER (Admin only)
+// ============================================================
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, phoneNumber, role, isActive, department, employeeId } =
-      req.body;
+    const { fullName, phoneNumber, role, isActive, department, employeeId } = req.body;
 
-    // Get current user to check department change
     const currentUser = await User.findById(id);
     if (!currentUser) {
       return res.status(404).json({
@@ -498,7 +533,6 @@ const updateUser = async (req, res) => {
 
     const oldDepartment = currentUser.department?.toString();
 
-    // If roles are being updated, handle the role field
     if (req.body.roles) {
       const roleDoc = await Role.findById(req.body.roles[0]);
       if (roleDoc) {
@@ -530,18 +564,14 @@ const updateUser = async (req, res) => {
       });
     }
 
-    // ========== UPDATE DEPARTMENT COUNTS ==========
     if (department && department !== oldDepartment) {
       const { Department } = require("../models/Department.model");
-
-      // Update old department
       if (oldDepartment) {
         const oldDept = await Department.findById(oldDepartment);
         if (oldDept) {
           await oldDept.updateEmployeeCount();
         }
       }
-      // Update new department
       if (department) {
         const newDept = await Department.findById(department);
         if (newDept) {
@@ -550,10 +580,13 @@ const updateUser = async (req, res) => {
       }
     }
 
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
+
     res.json({
       success: true,
       message: "User updated successfully",
-      data: user,
+      data: userObj,
     });
   } catch (error) {
     console.error("Update user error:", error);
@@ -564,12 +597,13 @@ const updateUser = async (req, res) => {
   }
 };
 
-// ============ DELETE USER (Admin only) ============
+// ============================================================
+// DELETE USER (Super Admin only)
+// ============================================================
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Prevent deleting yourself
     if (id === req.user._id.toString()) {
       return res.status(400).json({
         success: false,
@@ -577,7 +611,6 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    // Get user before deleting to get department
     const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({
@@ -590,7 +623,6 @@ const deleteUser = async (req, res) => {
 
     await User.findByIdAndDelete(id);
 
-    // ========== UPDATE DEPARTMENT COUNT ==========
     if (department) {
       const { Department } = require("../models/Department.model");
       const dept = await Department.findById(department);
@@ -612,7 +644,9 @@ const deleteUser = async (req, res) => {
   }
 };
 
-// ============ CHANGE USER ROLE (Admin only) ============
+// ============================================================
+// CHANGE USER ROLE (Super Admin only)
+// ============================================================
 const changeUserRole = async (req, res) => {
   try {
     const { id } = req.params;
@@ -647,10 +681,13 @@ const changeUserRole = async (req, res) => {
       });
     }
 
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
+
     res.json({
       success: true,
       message: "User role updated successfully",
-      data: user,
+      data: userObj,
     });
   } catch (error) {
     console.error("Change role error:", error);
@@ -661,7 +698,9 @@ const changeUserRole = async (req, res) => {
   }
 };
 
-// ============ CHANGE PASSWORD ============
+// ============================================================
+// CHANGE PASSWORD
+// ============================================================
 const changePassword = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -689,10 +728,7 @@ const changePassword = async (req, res) => {
       });
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      currentPassword,
-      user.password,
-    );
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
@@ -716,32 +752,69 @@ const changePassword = async (req, res) => {
     });
   }
 };
-
-// ============ COMPLETE ONBOARDING ============
-const completeOnboarding = async (req, res) => {
+// ============================================================
+// UPLOAD PROFILE PHOTO (Base64 Only)
+// ============================================================
+const uploadProfilePhoto = async (req, res) => {
   try {
-    const userId = req.user._id;
-    const { fullName, phoneNumber, dailyHoursTarget, notificationPreferences } =
-      req.body;
+    const { profilePhoto } = req.body;
 
-    await User.findByIdAndUpdate(userId, {
-      fullName: fullName || req.user.fullName,
-      phoneNumber: phoneNumber || null,
-      dailyHoursTarget: dailyHoursTarget || 8,
-      notificationPreferences: notificationPreferences || {
-        email: true,
-        push: true,
-        taskReminders: true,
+    // ✅ Validate base64 image
+    if (!profilePhoto) {
+      return res.status(400).json({
+        success: false,
+        message: "Profile photo (base64) is required",
+      });
+    }
+
+    // ✅ Check if it's a valid base64 image
+    if (!profilePhoto.startsWith('data:image/')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid image format. Must be base64 data URL starting with 'data:image/'",
+      });
+    }
+
+    // ✅ Validate image size (optional - base64 string length)
+    const base64Size = Buffer.from(profilePhoto.split(',')[1] || '', 'base64').length;
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (base64Size > maxSize) {
+      return res.status(400).json({
+        success: false,
+        message: "Image size too large. Maximum 5MB allowed.",
+      });
+    }
+
+    // ✅ Update user with base64 image
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        profilePhoto: profilePhoto,
+        avatar: profilePhoto,
       },
-      firstLogin: false,
-    });
+      { new: true },
+    ).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
 
     res.json({
       success: true,
-      message: "Onboarding completed successfully",
+      message: "Profile photo updated successfully",
+      data: {
+        profilePhoto: userObj.profilePhoto,
+        avatar: userObj.avatar,
+      },
     });
   } catch (error) {
-    console.error("Onboarding error:", error);
+    console.error("Upload photo error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
@@ -749,7 +822,11 @@ const completeOnboarding = async (req, res) => {
   }
 };
 
-// ============ UPDATE MY PROFILE ============
+// controllers/auth.controller.js - UPDATE MY PROFILE (FIXED)
+
+// ============================================================
+// UPDATE MY PROFILE - COMPLETE FIX
+// ============================================================
 const updateMyProfile = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -770,11 +847,26 @@ const updateMyProfile = async (req, res) => {
       achievements,
       notificationPreferences,
       dailyHoursTarget,
+      profilePhoto,
     } = req.body;
+
+    console.log("📝 Updating profile for user:", userId);
+    console.log("📝 Received data:", {
+      fullName,
+      phoneNumber,
+      bio,
+      position,
+      location,
+      skills: skills?.length,
+      languages: languages?.length,
+      achievements: achievements?.length,
+      socialLinks: socialLinks ? Object.keys(socialLinks) : [],
+      hasProfilePhoto: !!profilePhoto,
+    });
 
     const updates = {};
 
-    // Only add fields that are provided
+    // ✅ Basic fields
     if (fullName !== undefined) updates.fullName = fullName;
     if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
     if (employeeId !== undefined) updates.employeeId = employeeId;
@@ -783,17 +875,78 @@ const updateMyProfile = async (req, res) => {
     if (position !== undefined) updates.position = position;
     if (location !== undefined) updates.location = location;
     if (website !== undefined) updates.website = website;
-    if (socialLinks !== undefined) updates.socialLinks = socialLinks;
-    if (address !== undefined) updates.address = address;
-    if (emergencyContact !== undefined)
-      updates.emergencyContact = emergencyContact;
-    if (skills !== undefined) updates.skills = skills;
-    if (languages !== undefined) updates.languages = languages;
-    if (achievements !== undefined) updates.achievements = achievements;
-    if (notificationPreferences !== undefined)
-      updates.notificationPreferences = notificationPreferences;
-    if (dailyHoursTarget !== undefined)
-      updates.dailyHoursTarget = dailyHoursTarget;
+    if (dailyHoursTarget !== undefined) updates.dailyHoursTarget = dailyHoursTarget;
+
+    // ✅ Social Links - ensure it's an object
+    if (socialLinks !== undefined) {
+      updates.socialLinks = {
+        linkedin: socialLinks.linkedin || '',
+        github: socialLinks.github || '',
+        twitter: socialLinks.twitter || '',
+        facebook: socialLinks.facebook || '',
+        instagram: socialLinks.instagram || '',
+      };
+    }
+
+    // ✅ Skills - ensure it's an array
+    if (skills !== undefined) {
+      updates.skills = Array.isArray(skills) ? skills : [];
+    }
+
+    // ✅ Languages - ensure it's an array
+    if (languages !== undefined) {
+      updates.languages = Array.isArray(languages) ? languages : [];
+    }
+
+    // ✅ Achievements - ensure it's an array of objects
+    if (achievements !== undefined) {
+      updates.achievements = Array.isArray(achievements) ? achievements.map(a => ({
+        title: a.title || '',
+        date: a.date || new Date().toISOString().split('T')[0],
+        description: a.description || '',
+      })) : [];
+    }
+
+    // ✅ Notification Preferences
+    if (notificationPreferences !== undefined) {
+      updates.notificationPreferences = {
+        email: notificationPreferences.email !== undefined ? notificationPreferences.email : true,
+        push: notificationPreferences.push !== undefined ? notificationPreferences.push : true,
+        desktop: notificationPreferences.desktop !== undefined ? notificationPreferences.desktop : false,
+        taskReminder: notificationPreferences.taskReminder !== undefined ? notificationPreferences.taskReminder : true,
+        deadlineAlert: notificationPreferences.deadlineAlert !== undefined ? notificationPreferences.deadlineAlert : true,
+        teamUpdate: notificationPreferences.teamUpdate !== undefined ? notificationPreferences.teamUpdate : true,
+      };
+    }
+
+    // ✅ Profile Photo (Base64)
+    if (profilePhoto !== undefined) {
+      if (profilePhoto && !profilePhoto.startsWith('data:image/')) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid image format. Must be base64 data URL.",
+        });
+      }
+      updates.profilePhoto = profilePhoto;
+      updates.avatar = profilePhoto;
+    }
+
+    // ✅ Remove undefined values
+    Object.keys(updates).forEach(key => {
+      if (updates[key] === undefined || updates[key] === null) {
+        delete updates[key];
+      }
+    });
+
+    // ✅ If no updates, return early
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields to update",
+      });
+    }
+
+    console.log("📝 Applying updates:", Object.keys(updates));
 
     const user = await User.findByIdAndUpdate(
       userId,
@@ -811,13 +964,18 @@ const updateMyProfile = async (req, res) => {
       });
     }
 
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
+
+    console.log("✅ Profile updated successfully for:", userObj.email);
+
     res.json({
       success: true,
       message: "Profile updated successfully",
-      data: user,
+      data: userObj,
     });
   } catch (error) {
-    console.error("Update profile error:", error);
+    console.error("❌ Update profile error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
@@ -825,30 +983,75 @@ const updateMyProfile = async (req, res) => {
   }
 };
 
-// ============ UPLOAD PROFILE PHOTO ============
-const uploadProfilePhoto = async (req, res) => {
+// ============================================================
+// COMPLETE ONBOARDING (with Base64 support)
+// ============================================================
+const completeOnboarding = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No file uploaded",
-      });
+    const userId = req.user._id;
+    const {
+      fullName,
+      phoneNumber,
+      dailyHoursTarget,
+      notificationPreferences,
+      profilePhoto, // ✅ Base64 image
+      position,
+      employeeId,
+      location,
+      bio,
+      department,
+    } = req.body;
+
+    const updates = {
+      fullName: fullName || req.user.fullName,
+      phoneNumber: phoneNumber || null,
+      dailyHoursTarget: dailyHoursTarget || 8,
+      notificationPreferences: notificationPreferences || {
+        email: true,
+        push: true,
+        taskReminders: true,
+      },
+      firstLogin: false,
+      onboardingCompleted: true,
+    };
+
+    if (position) updates.position = position;
+    if (employeeId) updates.employeeId = employeeId;
+    if (location) updates.location = location;
+    if (bio) updates.bio = bio;
+    if (department) updates.department = department;
+
+    // ✅ Handle base64 profile photo
+    if (profilePhoto) {
+      if (!profilePhoto.startsWith('data:image/')) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid image format. Must be base64 data URL.",
+        });
+      }
+      updates.profilePhoto = profilePhoto;
+      updates.avatar = profilePhoto;
     }
 
-    const photoUrl = `/uploads/profiles/${req.file.filename}`;
     const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { profilePhoto: photoUrl },
-      { new: true },
-    ).select("-password");
+      userId,
+      { $set: updates },
+      { new: true, runValidators: true },
+    )
+      .select("-password")
+      .populate("department", "name code")
+      .populate("roles", "name code level");
+
+    let userObj = user.toObject();
+    userObj = ensureProfilePhoto(userObj);
 
     res.json({
       success: true,
-      message: "Profile photo updated successfully",
-      data: { profilePhoto: user.profilePhoto },
+      message: "Onboarding completed successfully",
+      data: userObj,
     });
   } catch (error) {
-    console.error("Upload photo error:", error);
+    console.error("Onboarding error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
@@ -856,7 +1059,9 @@ const uploadProfilePhoto = async (req, res) => {
   }
 };
 
-// ============ FORGOT PASSWORD ============
+// ============================================================
+// FORGOT PASSWORD
+// ============================================================
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -870,27 +1075,21 @@ const forgotPassword = async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
-      // Don't reveal if user exists or not for security
       return res.json({
         success: true,
-        message:
-          "If your email is registered, you will receive a password reset link",
+        message: "If your email is registered, you will receive a password reset link",
       });
     }
 
-    // Generate reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetExpires = Date.now() + 3600000; // 1 hour
+    const resetExpires = Date.now() + 3600000;
 
-    // Save token to user
     user.resetPasswordToken = resetToken;
     user.resetPasswordExpires = resetExpires;
     await user.save();
 
-    // Create reset URL
     const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password/${resetToken}`;
 
-    // Create email template
     const emailContent = `
       <div class="header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 30px; text-align: center; border-radius: 20px 20px 0 0;">
         <h1 style="font-size: 28px; margin-bottom: 10px;">🔐 Password Reset</h1>
@@ -911,7 +1110,6 @@ const forgotPassword = async (req, res) => {
       </div>
     `;
 
-    // Send email
     await sendEmail(
       user.email,
       "🔐 Password Reset Request",
@@ -931,7 +1129,9 @@ const forgotPassword = async (req, res) => {
   }
 };
 
-// ============ RESET PASSWORD ============
+// ============================================================
+// RESET PASSWORD
+// ============================================================
 const resetPassword = async (req, res) => {
   try {
     const { token } = req.params;
@@ -958,7 +1158,6 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Find user with valid token
     const user = await User.findOne({
       resetPasswordToken: token,
       resetPasswordExpires: { $gt: Date.now() },
@@ -971,14 +1170,12 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
 
-    // Send confirmation email
     const confirmContent = `
       <div class="header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 40px 30px; text-align: center; border-radius: 20px 20px 0 0;">
         <h1 style="font-size: 28px; margin-bottom: 10px;">✅ Password Reset Successful</h1>
@@ -1005,8 +1202,7 @@ const resetPassword = async (req, res) => {
 
     res.json({
       success: true,
-      message:
-        "Password reset successfully. You can now login with your new password.",
+      message: "Password reset successfully. You can now login with your new password.",
     });
   } catch (error) {
     console.error("Reset password error:", error);
@@ -1017,36 +1213,9 @@ const resetPassword = async (req, res) => {
   }
 };
 
-// ============ GET USER PROFILE BY ID ============
-const getUserProfile = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const user = await User.findById(id)
-      .select("-password")
-      .populate("department", "name code")
-      .populate("roles", "name code level");
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: user,
-    });
-  } catch (error) {
-    console.error("Get user profile error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error: " + error.message,
-    });
-  }
-};
-
-// ============ EXPORT USERS ============
+// ============================================================
+// EXPORT USERS
+// ============================================================
 const exportUsers = async (req, res) => {
   try {
     const users = await User.find()
@@ -1054,18 +1223,21 @@ const exportUsers = async (req, res) => {
       .populate("department", "name code")
       .populate("roles", "name code level");
 
-    const csvData = users.map((user) => ({
-      "Full Name": user.fullName,
-      Email: user.email,
-      Role: user.role,
-      "Employee ID": user.employeeId,
-      Department: user.department?.name || "N/A",
-      Status: user.isActive ? "Active" : "Inactive",
-      "Last Login": user.lastLogin
-        ? new Date(user.lastLogin).toLocaleDateString()
-        : "Never",
-      "Created At": new Date(user.createdAt).toLocaleDateString(),
-    }));
+    const csvData = users.map((user) => {
+      const obj = user.toObject();
+      return {
+        "Full Name": obj.fullName,
+        Email: obj.email,
+        Role: obj.role,
+        "Employee ID": obj.employeeId,
+        Department: obj.department?.name || "N/A",
+        Status: obj.isActive ? "Active" : "Inactive",
+        "Last Login": obj.lastLogin
+          ? new Date(obj.lastLogin).toLocaleDateString()
+          : "Never",
+        "Created At": new Date(obj.createdAt).toLocaleDateString(),
+      };
+    });
 
     res.json({
       success: true,
@@ -1081,7 +1253,9 @@ const exportUsers = async (req, res) => {
   }
 };
 
-// ============ BULK IMPORT USERS ============
+// ============================================================
+// BULK IMPORT USERS
+// ============================================================
 const bulkImportUsers = async (req, res) => {
   try {
     const { users } = req.body;
@@ -1102,10 +1276,8 @@ const bulkImportUsers = async (req, res) => {
 
     for (const userData of users) {
       try {
-        const { fullName, email, password, employeeId, role, department } =
-          userData;
+        const { fullName, email, password, employeeId, role, department } = userData;
 
-        // Check if user exists
         const existingUser = await User.findOne({
           $or: [{ email: email.toLowerCase() }, { employeeId }],
         });
@@ -1114,7 +1286,6 @@ const bulkImportUsers = async (req, res) => {
           continue;
         }
 
-        // Get role ID if role is provided
         let roleId = null;
         if (role) {
           const roleDoc = await Role.findOne({ code: role.toUpperCase() });
@@ -1128,10 +1299,8 @@ const bulkImportUsers = async (req, res) => {
           }
         }
 
-        // Hash password
         const hashedPassword = await bcrypt.hash(password || "Temp@123", 10);
 
-        // Create user
         const user = await User.create({
           fullName,
           email: email.toLowerCase(),
@@ -1153,7 +1322,6 @@ const bulkImportUsers = async (req, res) => {
       }
     }
 
-    // ========== UPDATE DEPARTMENT COUNTS ==========
     if (departmentsToUpdate.size > 0) {
       const { Department } = require("../models/Department.model");
       for (const deptId of departmentsToUpdate) {
@@ -1178,7 +1346,9 @@ const bulkImportUsers = async (req, res) => {
   }
 };
 
-// ============ EXPORTS ============
+// ============================================================
+// EXPORTS
+// ============================================================
 module.exports = {
   register,
   login,
