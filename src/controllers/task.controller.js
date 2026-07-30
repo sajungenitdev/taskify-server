@@ -22,39 +22,97 @@ const VALID_STATUSES = [
 // ============================================================
 // GET TASKS - Optimized with parallel queries and lean
 // ============================================================
-
 const getTasks = async (req, res) => {
   try {
     const user = req.user;
-    const { status, priority, projectId, page = 1, limit = 20 } = req.query;
+    const { status, priority, projectId, departmentId, projectManagerId, page = 1, limit = 20 } = req.query;
 
     let query = {};
 
-    // Role-based filtering
-    if (user.role === "employee") {
-      query.assignedTo = user._id;
-    } else if (user.role === "line_manager") {
+    console.log("🔍 getTasks called with:", {
+      userId: user._id,
+      userRole: user.role,
+      userDepartmentId: user.departmentId,
+      queryParams: req.query
+    });
+
+    // ============ ROLE-BASED FILTERING ============
+    
+    // Super Admin, Admin, HR Manager - can see all tasks
+    if (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager") {
+      // No filter - see all tasks
+      console.log("👑 Admin role - seeing all tasks");
+    } 
+    // ============ PROJECT MANAGER - Show department tasks ============
+    else if (user.role === "project_manager") {
+      console.log("📋 Project Manager - fetching tasks");
+      
+      // Get the user's department ID
+      const deptId = user.departmentId || user.department?._id;
+      
+      if (deptId) {
+        // Show ALL tasks from the department
+        query.departmentId = deptId;
+        console.log(`🏢 Project Manager - showing all tasks for department: ${deptId}`);
+        
+        // Also include tasks where the user is the project manager or assigned to
+        // But we keep it simple - show all department tasks
+        // The user can see everything in their department
+      } else {
+        // If no department, fallback to assigned tasks only
+        query.assignedTo = user._id;
+        console.log(`👤 Project Manager has no department - showing assigned tasks only`);
+      }
+    } 
+    // Department Manager - see tasks in their department
+    else if (user.role === "dept_manager") {
+      if (user.departmentId) {
+        query.departmentId = user.departmentId;
+        console.log(`🏢 Dept Manager - filtering by department: ${user.departmentId}`);
+      } else {
+        console.log("⚠️ Dept Manager has no department assigned");
+        return res.json({
+          success: true,
+          data: [],
+          stats: getEmptyStats(),
+          pagination: { page: 1, limit: 20, total: 0, pages: 0 }
+        });
+      }
+    } 
+    // Line Manager - see tasks of their team
+    else if (user.role === "line_manager") {
       const teamMembers = await User.find({ managerId: user._id })
         .select("_id")
         .lean();
-      query.assignedTo = { $in: [...teamMembers.map((m) => m._id), user._id] };
-    } else if (user.role === "dept_manager" || user.role === "project_manager") {
-      query.departmentId = user.departmentId;
+      const teamMemberIds = [...teamMembers.map((m) => m._id), user._id];
+      query.assignedTo = { $in: teamMemberIds };
+      console.log(`👥 Line Manager - filtering ${teamMemberIds.length} team members`);
+    } 
+    // Employee - see only their own tasks
+    else {
+      query.assignedTo = user._id;
+      console.log(`👤 Employee - filtering by assignedTo: ${user._id}`);
     }
 
+    // ============ ADDITIONAL FILTERS FROM QUERY PARAMS ============
     if (status) query.status = status;
     if (priority) query.priority = priority;
     if (projectId) query.projectId = projectId;
+    if (departmentId) query.departmentId = departmentId;
+    if (projectManagerId) query.projectManagerId = projectManagerId;
 
-    // Parallel queries with lean for performance
+    console.log("📊 Final query:", JSON.stringify(query, null, 2));
+
+    // ============ EXECUTE QUERIES ============
     const [tasks, total, stats] = await Promise.all([
       Task.find(query)
         .select(
-          "_id title description priority status deadline estimatedHours projectId createdAt updatedAt evidenceUrls evidenceRequired rejectionReason approvalNote evidenceSubmitted evidenceSubmittedAt"
+          "_id title description priority status deadline estimatedHours actualMinutes projectId createdAt updatedAt evidenceUrls evidenceRequired rejectionReason approvalNote evidenceSubmitted evidenceSubmittedAt assignedTo assignedBy"
         )
         .populate("assignedTo", "fullName email employeeId")
         .populate("assignedBy", "fullName email")
         .populate("projectId", "name code")
+        .populate("departmentId", "name code")
         .sort({ createdAt: -1 })
         .skip((parseInt(page) - 1) * parseInt(limit))
         .limit(parseInt(limit))
@@ -87,6 +145,8 @@ const getTasks = async (req, res) => {
       rejected: 0,
     };
 
+    console.log(`✅ Found ${tasks.length} tasks for user ${user._id} (${user.role})`);
+
     res.json({
       success: true,
       data: tasks,
@@ -100,9 +160,23 @@ const getTasks = async (req, res) => {
     });
   } catch (error) {
     console.error("Get tasks error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error: " + error.message 
+    });
   }
 };
+
+// ============ HELPER FUNCTION ============
+const getEmptyStats = () => ({
+  total: 0,
+  pending: 0,
+  inProgress: 0,
+  submitted: 0,
+  completed: 0,
+  overdue: 0,
+  rejected: 0,
+});
 
 // ============================================================
 // GET MY TASKS - Optimized for employee view
@@ -580,25 +654,25 @@ const updateTaskStatus = async (req, res) => {
     const oldStatus = oldTask.status;
 
     // ============ BUILD UPDATE OBJECT ============
-    const updateData = { 
+    const updateData = {
       status: finalStatus,
     };
 
     // ============ HANDLE EVIDENCE ============
     if (evidenceUrls && Array.isArray(evidenceUrls) && evidenceUrls.length > 0) {
       console.log("📎 Evidence URLs received:", evidenceUrls);
-      
+
       const existingUrls = oldTask.evidenceUrls || [];
       const allUrls = [...new Set([...existingUrls, ...evidenceUrls])];
-      
+
       updateData.evidenceUrls = allUrls;
       updateData.evidenceSubmitted = true;
       updateData.evidenceSubmittedAt = new Date();
-      
+
       console.log("📎 Evidence URLs saved:", allUrls);
     } else if (finalStatus === "submitted" && oldTask.evidenceRequired) {
       const hasExistingEvidence = oldTask.evidenceUrls && oldTask.evidenceUrls.length > 0;
-      
+
       if (!hasExistingEvidence) {
         return res.status(400).json({
           success: false,
@@ -606,7 +680,7 @@ const updateTaskStatus = async (req, res) => {
           requiresEvidence: true,
         });
       }
-      
+
       updateData.evidenceSubmitted = true;
       updateData.evidenceSubmittedAt = new Date();
     }
@@ -623,7 +697,7 @@ const updateTaskStatus = async (req, res) => {
 
     // ============ UPDATE THE TASK ============
     console.log("📤 Updating task with data:", updateData);
-    
+
     const task = await Task.findByIdAndUpdate(
       id,
       { $set: updateData },
@@ -691,9 +765,9 @@ const updateTaskStatus = async (req, res) => {
 
   } catch (error) {
     console.error("Update status error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 };

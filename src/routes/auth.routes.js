@@ -144,6 +144,39 @@ router.post("/onboarding/complete", completeOnboarding);
  */
 router.get("/users", getAllUsers);
 
+router.get("/users/department/:departmentId", async (req, res) => {
+  try {
+    const { departmentId } = req.params;
+    const { User } = require("../models/User.model");
+
+    console.log(`🔍 Fetching users for department: ${departmentId}`);
+
+    const users = await User.find({
+      $or: [
+        { department: departmentId },
+        { "department._id": departmentId },
+        { departmentId: departmentId }
+      ],
+      isActive: true
+    }).select('_id fullName email role departmentId department avatar profilePhoto');
+
+    console.log(`✅ Found ${users.length} users in department`);
+
+    res.status(200).json({
+      success: true,
+      data: users,
+      count: users.length
+    });
+  } catch (error) {
+    console.error("❌ Error fetching department users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch department users",
+      error: error.message
+    });
+  }
+});
+
 /**
  * @route   GET /api/auth/users/active
  * @desc    Get all active users
