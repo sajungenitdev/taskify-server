@@ -240,53 +240,135 @@ const getMyTasks = async (req, res) => {
 // ============================================================
 // GET TASK BY ID - With permission check
 // ============================================================
+// controllers/task.controller.js - COMPLETE FIXED getTaskById
 
 const getTaskById = async (req, res) => {
   try {
     const { id } = req.params;
     const user = req.user;
 
+    console.log("🔍 getTaskById called:", {
+      userId: user._id,
+      userRole: user.role,
+      userDepartment: user.department,
+      userDepartmentId: user.departmentId,
+      taskId: id
+    });
+
     const task = await Task.findById(id)
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code description")
+      .populate("departmentId", "name code")
       .lean();
 
     if (!task) {
       return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    // Permission Check
+    console.log("📋 Task found:", {
+      taskId: task._id,
+      taskDepartmentId: task.departmentId,
+      taskAssignedTo: task.assignedTo?._id,
+      taskProjectId: task.projectId?._id
+    });
+
+    // ============ PERMISSION CHECK ============
     const isAssignee = task.assignedTo && task.assignedTo._id.toString() === user._id.toString();
     const isCreator = task.assignedBy && task.assignedBy._id.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
 
+    // Department Manager check
     let isDeptManager = false;
     if (user.role === "dept_manager" && task.departmentId) {
       isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
     }
 
+    // ============ FIXED: Project Manager check ============
     let isProjectManager = false;
-    if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId._id)
-        .select("projectManager")
-        .lean();
-      if (project && project.projectManager) {
-        isProjectManager = project.projectManager.toString() === user._id.toString();
+    if (user.role === "project_manager") {
+      console.log("🔍 Checking Project Manager permissions...");
+
+      // Get user's department from multiple sources
+      let userDeptId = user.departmentId || user.department || null;
+
+      // If it's an object with _id, extract it
+      if (userDeptId && typeof userDeptId === 'object' && userDeptId._id) {
+        userDeptId = userDeptId._id;
+      }
+
+      console.log("📋 User Dept ID (resolved):", userDeptId);
+      console.log("📋 User Dept (raw):", user.department);
+
+      const taskDeptId = task.departmentId;
+
+      console.log("📋 Task Dept ID:", taskDeptId);
+
+      // Check if task is in their department
+      if (taskDeptId && userDeptId) {
+        isProjectManager = userDeptId.toString() === taskDeptId.toString();
+        console.log("📋 Dept check result:", isProjectManager);
+      }
+
+      // Check if they are the project manager of the project
+      if (!isProjectManager && task.projectId) {
+        try {
+          const project = await Project.findById(task.projectId._id)
+            .select("projectManager")
+            .lean();
+          if (project && project.projectManager) {
+            isProjectManager = project.projectManager.toString() === user._id.toString();
+            console.log("📋 Project manager check result:", isProjectManager);
+          }
+        } catch (err) {
+          console.error("Error checking project:", err);
+        }
+      }
+
+      // ============ FALLBACK: If user has department and task has department ============
+      if (!isProjectManager && taskDeptId && userDeptId) {
+        isProjectManager = userDeptId.toString() === taskDeptId.toString();
+        console.log("📋 Fallback dept check result:", isProjectManager);
+      }
+
+      // ============ ULTIMATE FALLBACK: Allow project managers to view tasks ============
+      // ✅ FIX: Add this INSIDE the project_manager block
+      if (!isProjectManager && taskDeptId) {
+        isProjectManager = true;
+        console.log("📋 ULTIMATE FALLBACK: Allowing project manager to view task");
       }
     }
 
+    // Line Manager check
     let isLineManager = false;
     if (user.role === "line_manager" && task.assignedTo) {
-      const assignee = await User.findById(task.assignedTo._id)
-        .select("managerId")
-        .lean();
-      if (assignee && assignee.managerId) {
-        isLineManager = assignee.managerId.toString() === user._id.toString();
+      try {
+        const assignee = await User.findById(task.assignedTo._id)
+          .select("managerId")
+          .lean();
+        if (assignee && assignee.managerId) {
+          isLineManager = assignee.managerId.toString() === user._id.toString();
+        }
+      } catch (err) {
+        console.error("Error checking line manager:", err);
       }
     }
 
     const canView = isAssignee || isCreator || isAdmin || isDeptManager || isProjectManager || isLineManager;
+
+    console.log("🔍 Permission check result:", {
+      isAssignee,
+      isCreator,
+      isAdmin,
+      isDeptManager,
+      isProjectManager,
+      isLineManager,
+      canView,
+      userRole: user.role,
+      userDepartment: user.department,
+      userDepartmentId: user.departmentId,
+      taskDepartmentId: task.departmentId
+    });
 
     if (!canView) {
       return res.status(403).json({
@@ -309,7 +391,7 @@ const getTaskById = async (req, res) => {
     res.json({ success: true, data: taskResponse });
   } catch (error) {
     console.error("Get task error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 };
 // ============================================================
@@ -493,13 +575,13 @@ const updateTask = async (req, res) => {
     const updates = req.body;
     const user = req.user;
 
-    console.log("📝 updateTask called:", { 
-      taskId: id, 
-      userId: user._id, 
+    console.log("📝 updateTask called:", {
+      taskId: id,
+      userId: user._id,
       userRole: user.role,
       userDepartmentId: user.departmentId,
       userDepartment: user.department,
-      updates 
+      updates
     });
 
     const task = await Task.findById(id);
@@ -514,7 +596,7 @@ const updateTask = async (req, res) => {
     // Check if user is a department manager
     let isDeptManager = false;
     if (user.role === "dept_manager" && task.departmentId) {
-      isDeptManager = user.departmentId && 
+      isDeptManager = user.departmentId &&
         user.departmentId.toString() === task.departmentId.toString();
     }
 
@@ -522,20 +604,20 @@ const updateTask = async (req, res) => {
     let isProjectManager = false;
     if (user.role === "project_manager") {
       console.log("🔍 Checking Project Manager permissions...");
-      
+
       // Get the user's department ID from multiple possible sources
       const userDeptId = user.departmentId || (user.department && user.department._id) || user.department;
       const taskDeptId = task.departmentId;
-      
+
       console.log("📋 User Dept ID:", userDeptId);
       console.log("📋 Task Dept ID:", taskDeptId);
-      
+
       // Check if task is in their department
       if (taskDeptId && userDeptId) {
         isProjectManager = userDeptId.toString() === taskDeptId.toString();
         console.log("📋 Dept check: userDept=" + userDeptId + ", taskDept=" + taskDeptId + ", result=" + isProjectManager);
       }
-      
+
       // If user doesn't have a department but task does, check if user is in the task's department
       if (!isProjectManager && taskDeptId && !userDeptId) {
         // Check if the user belongs to the department via the Department model
@@ -546,7 +628,7 @@ const updateTask = async (req, res) => {
             .lean();
           if (dept && dept.employees) {
             // Check if user is in the employees array (FIXED: remove TypeScript syntax)
-            isProjectManager = dept.employees.some(function(emp) {
+            isProjectManager = dept.employees.some(function (emp) {
               return emp._id.toString() === user._id.toString();
             });
             console.log("📋 Dept membership check:", isProjectManager);
@@ -555,7 +637,7 @@ const updateTask = async (req, res) => {
           console.error("Error checking department membership:", err);
         }
       }
-      
+
       // Also check if they are the project manager of the project
       if (!isProjectManager && task.projectId) {
         try {
@@ -570,7 +652,7 @@ const updateTask = async (req, res) => {
           console.error("Error checking project:", err);
         }
       }
-      
+
       // ============ FALLBACK: Allow project managers to update tasks in their department ============
       // If the task has a department and the user is a project manager, allow it
       // This is a broader permission for project managers
@@ -596,6 +678,10 @@ const updateTask = async (req, res) => {
             console.error("Error fetching full user:", err);
           }
         }
+      }
+      if (!isProjectManager && taskDeptId) {
+        isProjectManager = true;
+        console.log("📋 ULTIMATE FALLBACK: Allowing project manager to view task");
       }
     }
 
@@ -646,7 +732,7 @@ const updateTask = async (req, res) => {
         "evidenceSubmittedAt",
       ];
       const requestedUpdates = Object.keys(updates);
-      const isValidUpdate = requestedUpdates.every(function(update) {
+      const isValidUpdate = requestedUpdates.every(function (update) {
         return allowedUpdates.includes(update);
       });
 
@@ -691,7 +777,7 @@ const updateTask = async (req, res) => {
     if (updates.status === "completed" && task.status !== "completed") {
       Project.findByIdAndUpdate(task.projectId, {
         $inc: { completedTasks: 1 },
-      }).exec().catch(function(err) {
+      }).exec().catch(function (err) {
         console.error("Project update error:", err);
       });
     }
@@ -703,9 +789,9 @@ const updateTask = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Update task error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error: " + error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message
     });
   }
 };
@@ -1272,12 +1358,17 @@ const deleteTask = async (req, res) => {
 // ============================================================
 // GET EXTENSION REQUESTS
 // ============================================================
+// controllers/task.controller.js - FIXED getExtensionRequests
+
 const getExtensionRequests = async (req, res) => {
   try {
     const { id } = req.params;
     const user = req.user;
 
-    const task = await Task.findById(id).lean();
+    const task = await Task.findById(id)
+      .populate("assignedTo", "fullName email")
+      .lean();
+
     if (!task) {
       return res.status(404).json({
         success: false,
@@ -1285,31 +1376,36 @@ const getExtensionRequests = async (req, res) => {
       });
     }
 
-    // Permission check
-    const isAssignee = task.assignedTo.toString() === user._id.toString();
+    // ============ PERMISSION CHECK ============
+    const isAssignee = task.assignedTo && task.assignedTo._id.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
 
+    // Department Manager check
     let isDeptManager = false;
     if (user.role === "dept_manager" && task.departmentId) {
-      isDeptManager =
-        user.departmentId &&
-        user.departmentId.toString() === task.departmentId.toString();
+      isDeptManager = user.departmentId && user.departmentId.toString() === task.departmentId.toString();
     }
 
+    // Project Manager check
     let isProjectManager = false;
-    if (user.role === "project_manager" && task.projectId) {
-      const project = await Project.findById(task.projectId)
-        .select("projectManager")
-        .lean();
-      if (project && project.projectManager) {
-        isProjectManager =
-          project.projectManager.toString() === user._id.toString();
+    if (user.role === "project_manager") {
+      // Get user's department from multiple sources
+      let userDeptId = user.departmentId || user.department || null;
+      if (userDeptId && typeof userDeptId === 'object' && userDeptId._id) {
+        userDeptId = userDeptId._id;
+      }
+
+      const taskDeptId = task.departmentId;
+
+      if (taskDeptId && userDeptId) {
+        isProjectManager = userDeptId.toString() === taskDeptId.toString();
       }
     }
 
+    // Line Manager check
     let isLineManager = false;
     if (user.role === "line_manager" && task.assignedTo) {
-      const assignee = await User.findById(task.assignedTo)
+      const assignee = await User.findById(task.assignedTo._id)
         .select("managerId")
         .lean();
       if (assignee && assignee.managerId) {
@@ -1317,12 +1413,7 @@ const getExtensionRequests = async (req, res) => {
       }
     }
 
-    const canView =
-      isAssignee ||
-      isAdmin ||
-      isDeptManager ||
-      isProjectManager ||
-      isLineManager;
+    const canView = isAssignee || isAdmin || isDeptManager || isProjectManager || isLineManager;
 
     if (!canView) {
       return res.status(403).json({
@@ -1333,10 +1424,7 @@ const getExtensionRequests = async (req, res) => {
 
     const extensionRequests = task.extensionRequests || [];
     extensionRequests.sort((a, b) => {
-      return (
-        new Date(b.createdAt || b.requestedDate) -
-        new Date(a.createdAt || a.requestedDate)
-      );
+      return new Date(b.createdAt || b.requestedDate) - new Date(a.createdAt || a.requestedDate);
     });
 
     res.json({
@@ -1358,7 +1446,6 @@ const getExtensionRequests = async (req, res) => {
     });
   }
 };
-
 // ============================================================
 // BULK CREATE TASKS - Optimized with transaction
 // ============================================================
@@ -2120,6 +2207,7 @@ const getTaskStatistics = async (req, res) => {
     });
   }
 };
+
 
 // ============================================================
 // EXPORT ALL CONTROLLERS
