@@ -11,6 +11,7 @@ const { Role } = require("../models/Role.model");
 const crypto = require("crypto");
 const { sendEmail } = require("../config/email.config");
 const EmailTemplates = require("../services/emailTemplates.service");
+const { createAuditLog } = require("./auditLog.controller");
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -115,6 +116,34 @@ const login = async (req, res) => {
       .populate("roles", "name code level");
 
     if (!user) {
+      // Log failed login attempt
+      await createAuditLog({
+        action: "login",
+        resource: "user",
+        userId: null,
+        user: {
+          id: null,
+          name: "Unknown",
+          email: email,
+          role: "unknown",
+        },
+        ip: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers["user-agent"] || "Unknown",
+        details: {
+          method: "POST",
+          path: "/auth/login",
+          status: "failed",
+          reason: "User not found"
+        },
+        status: "failed",
+        severity: "medium",
+        metadata: {
+          browser: req.headers["user-agent"] || "Unknown",
+          os: "Unknown",
+          platform: "Unknown"
+        }
+      });
+
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
@@ -130,14 +159,73 @@ const login = async (req, res) => {
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
+      // Log failed login attempt
+      await createAuditLog({
+        action: "login",
+        resource: "user",
+        resourceId: user._id,
+        userId: user._id,
+        user: {
+          id: user._id,
+          name: user.fullName || user.name,
+          email: user.email,
+          role: user.role,
+        },
+        ip: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers["user-agent"] || "Unknown",
+        details: {
+          method: "POST",
+          path: "/auth/login",
+          status: "failed",
+          reason: "Invalid password"
+        },
+        status: "failed",
+        severity: "medium",
+        metadata: {
+          browser: req.headers["user-agent"] || "Unknown",
+          os: "Unknown",
+          platform: "Unknown"
+        }
+      });
+
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
       });
     }
 
+    // Successful login - update last login
     user.lastLogin = new Date();
     await user.save();
+
+    // Log successful login
+    await createAuditLog({
+      action: "login",
+      resource: "user",
+      resourceId: user._id,
+      userId: user._id,
+      user: {
+        id: user._id,
+        name: user.fullName || user.name,
+        email: user.email,
+        role: user.role,
+      },
+      ip: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      details: {
+        method: "POST",
+        path: "/auth/login",
+        status: "success",
+        lastLogin: user.lastLogin
+      },
+      status: "success",
+      severity: "low",
+      metadata: {
+        browser: req.headers["user-agent"] || "Unknown",
+        os: "Unknown",
+        platform: "Unknown"
+      }
+    });
 
     const token = generateToken(user);
     let userResponse = sanitizeUser(user);
@@ -155,9 +243,85 @@ const login = async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
+
+    // Log error
+    await createAuditLog({
+      action: "login",
+      resource: "user",
+      userId: null,
+      user: {
+        id: null,
+        name: "Unknown",
+        email: req.body?.email || "Unknown",
+        role: "unknown",
+      },
+      ip: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      details: {
+        method: "POST",
+        path: "/auth/login",
+        status: "error",
+        error: error.message
+      },
+      status: "failed",
+      severity: "high",
+      metadata: {
+        browser: req.headers["user-agent"] || "Unknown",
+        os: "Unknown",
+        platform: "Unknown"
+      }
+    }).catch(err => console.error("Failed to log login error:", err));
+
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// LOGOUT
+// ============================================================
+const logout = async (req, res) => {
+  try {
+    // Log logout first (before sending response)
+    await createAuditLog({
+      action: "logout",
+      resource: "user",
+      resourceId: req.user?._id,
+      userId: req.user?._id,
+      user: {
+        id: req.user?._id,
+        name: req.user?.fullName || req.user?.name || "Unknown",
+        email: req.user?.email || "Unknown",
+        role: req.user?.role || "unknown",
+      },
+      ip: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      details: {
+        method: "POST",
+        path: "/auth/logout",
+        status: "success"
+      },
+      status: "success",
+      severity: "low",
+      metadata: {
+        browser: req.headers["user-agent"] || "Unknown",
+        os: "Unknown",
+        platform: "Unknown"
+      }
+    }).catch(err => console.error("Failed to log logout:", err));
+
+    // Then send response
+    res.json({
+      success: true,
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
     });
   }
 };
@@ -204,24 +368,6 @@ const refreshToken = async (req, res) => {
     }
   } catch (error) {
     console.error("Refresh token error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
-  }
-};
-
-// ============================================================
-// LOGOUT
-// ============================================================
-const logout = async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      message: "Logged out successfully",
-    });
-  } catch (error) {
-    console.error("Logout error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -315,7 +461,7 @@ const register = async (req, res) => {
 
     // ✅ REMOVE THIS - Don't hash here, let the pre-save middleware handle it
     // const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     const finalEmployeeId = employeeId || `EMP${Date.now()}`;
 
     const userData = {
@@ -1398,10 +1544,10 @@ const changeUserPassword = async (req, res) => {
     // ✅ Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     user.password = hashedPassword;
-    
+
     // ✅ Optionally mark that password was changed
     user.isPasswordChanged = true;
-    
+
     await user.save();
 
     // ✅ Send success response
