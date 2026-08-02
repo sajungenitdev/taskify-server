@@ -167,6 +167,7 @@ const kpiRoutes = require("./src/routes/kpi.routes");
 const kpiAnalyticsRoutes = require("./src/routes/kpi.analytics.routes");
 const settingRoutes = require("./src/routes/setting.routes");
 const auditLogRoutes = require("./src/routes/auditLog.routes");
+const backupRoutes = require("./src/routes/backup.routes");
 
 
 // API Routes
@@ -191,6 +192,7 @@ app.use("/api/v1/kpi", kpiRoutes);
 app.use("/api/v1/kpi-analytics", kpiAnalyticsRoutes);
 app.use("/api/v1/settings", settingRoutes);
 app.use("/api/v1/audit-logs", auditLogRoutes);
+app.use("/api/v1/backup", backupRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
