@@ -452,6 +452,8 @@ const register = async (req, res) => {
         message: "User with this email already exists",
       });
     }
+
+    // Check phone if provided
     if (phone && phone.trim()) {
       const existingPhone = await User.findOne({ phoneNumber: phone.trim() });
       if (existingPhone) {
@@ -463,6 +465,7 @@ const register = async (req, res) => {
         });
       }
     }
+
     // Get default role
     let userRole = role || "employee";
     let roleId = null;
@@ -471,13 +474,9 @@ const register = async (req, res) => {
       roleId = defaultRole._id;
     }
 
-    // Generate employee ID
     const employeeId = `EMP${Date.now().toString().slice(-6)}`;
-
-    // ✅ Define trialEndDate outside the if block
     let trialEndDate = null;
 
-    // Prepare user data
     const userData = {
       fullName,
       email: email.toLowerCase(),
@@ -493,9 +492,7 @@ const register = async (req, res) => {
       firstLogin: true,
     };
 
-    // ✅ ONLY add trial if it's self-registration (not admin creation)
     if (!isAdminCreation) {
-      // Calculate trial end date (7 days from now)
       trialEndDate = new Date();
       trialEndDate.setDate(trialEndDate.getDate() + (trialDays || 7));
 
@@ -520,70 +517,14 @@ const register = async (req, res) => {
         startDate: new Date(),
         trialEndDate: trialEndDate,
       };
-    } else {
-      // Admin created user - no trial, set as active immediately
-      userData.isActive = true;
-      userData.isEmailVerified = true;
-      userData.subscription = {
-        status: "active",
-        plan: "enterprise",
-        billingCycle: "monthly",
-        price: 0,
-        currency: "USD",
-        startDate: new Date(),
-      };
     }
 
     const user = await User.create(userData);
 
-    // ✅ ONLY send trial email for self-registration
-    if (!isAdminCreation) {
-      // Send welcome email with trial information
-      await sendTrialWelcomeEmail(user, password, trialDays || 7, trialEndDate, plan);
-    } else {
-      // Send simple welcome email for admin-created users
-      await sendAdminCreatedWelcomeEmail(user, password);
-    }
-
-    // Create audit log
-    await createAuditLog({
-      action: isAdminCreation ? "admin_create_user" : "register",
-      resource: "user",
-      resourceId: user._id,
-      userId: user._id,
-      user: {
-        id: user._id,
-        name: user.fullName,
-        email: user.email,
-        role: user.role,
-      },
-      ip: req.ip || req.connection.remoteAddress,
-      userAgent: req.headers["user-agent"] || "Unknown",
-      details: {
-        method: "POST",
-        path: "/auth/register",
-        status: "success",
-        isAdminCreation: isAdminCreation,
-        plan: plan || "individual",
-        trialDays: isAdminCreation ? 0 : (trialDays || 7),
-      },
-      status: "success",
-      severity: "low",
-      metadata: {
-        browser: req.headers["user-agent"] || "Unknown",
-        os: "Unknown",
-        platform: "Unknown",
-      },
-    });
-
-    // Return user response
+    // ✅ STEP 1: Send response IMMEDIATELY
     const userResponse = sanitizeUser(user);
+    const responseData = { user: userResponse };
 
-    const responseData = {
-      user: userResponse,
-    };
-
-    // ✅ Only include trial info for self-registration
     if (!isAdminCreation) {
       responseData.trial = {
         isActive: true,
@@ -595,11 +536,58 @@ const register = async (req, res) => {
       responseData.message = "User created successfully by admin.";
     }
 
+    // ✅ Send response right away
     res.status(201).json({
       success: true,
       message: responseData.message,
       data: responseData,
     });
+
+    // ✅ STEP 2: Do background tasks AFTER response
+    // Use setImmediate to run these in the background
+    setImmediate(async () => {
+      try {
+        // Send email in background
+        if (!isAdminCreation) {
+          await sendTrialWelcomeEmail(user, password, trialDays || 7, trialEndDate, plan);
+        } else {
+          await sendAdminCreatedWelcomeEmail(user, password);
+        }
+      } catch (emailError) {
+        console.error('⚠️ Background email failed:', emailError.message);
+      }
+
+      // Create audit log in background
+      try {
+        await createAuditLog({
+          action: isAdminCreation ? "admin_create_user" : "register",
+          resource: "user",
+          resourceId: user._id,
+          userId: user._id,
+          user: {
+            id: user._id,
+            name: user.fullName,
+            email: user.email,
+            role: user.role,
+          },
+          ip: req.ip || req.connection.remoteAddress,
+          userAgent: req.headers["user-agent"] || "Unknown",
+          details: {
+            method: "POST",
+            path: "/auth/register",
+            status: "success",
+            isAdminCreation: isAdminCreation,
+            plan: plan || "individual",
+            trialDays: isAdminCreation ? 0 : (trialDays || 7),
+          },
+          status: "success",
+          severity: "low",
+        });
+      } catch (auditError) {
+        console.error('⚠️ Background audit log failed:', auditError.message);
+      }
+    });
+
   } catch (error) {
     console.error("Register error:", error);
     res.status(500).json({
