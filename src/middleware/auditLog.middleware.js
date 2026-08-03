@@ -1,8 +1,8 @@
 // middleware/auditLog.middleware.js
 const { createAuditLog } = require("../controllers/auditLog.controller");
 const requestIp = require("request-ip");
-const geoip = require("geoip-lite");
 
+// Simple middleware without heavy dependencies
 const auditLog = (options = {}) => {
   return async (req, res, next) => {
     // Store original send method
@@ -12,12 +12,12 @@ const auditLog = (options = {}) => {
     // Capture response data
     let responseData = null;
 
-    res.send = function(data) {
+    res.send = function (data) {
       responseData = data;
       return originalSend.call(this, data);
     };
 
-    res.json = function(data) {
+    res.json = function (data) {
       responseData = data;
       return originalJson.call(this, data);
     };
@@ -32,14 +32,9 @@ const auditLog = (options = {}) => {
 
       // Get IP
       const ip = requestIp.getClientIp(req) || req.ip || "Unknown";
-      
-      // Get location from IP
-      const geo = geoip.lookup(ip);
-      const location = geo ? `${geo.city}, ${geo.country}` : "Unknown";
 
       // Parse user agent
       const userAgent = req.headers["user-agent"] || "Unknown";
-      const ua = require("ua-parser-js")(userAgent);
 
       // Determine status from response
       const statusCode = res.statusCode;
@@ -52,63 +47,65 @@ const auditLog = (options = {}) => {
       } else if (statusCode >= 500) {
         status = "failed";
         severity = "high";
-      } else if (statusCode >= 300 && statusCode < 400) {
-        status = "warning";
-        severity = "medium";
       }
 
       // Determine action from route
-      let action = "view";
+      let action = options.action || "view";
       const method = req.method;
-      if (method === "POST") action = "create";
-      else if (method === "PUT" || method === "PATCH") action = "update";
-      else if (method === "DELETE") action = "delete";
-      else if (method === "GET") action = "view";
+      if (method === "POST") action = options.action || "create";
+      else if (method === "PUT" || method === "PATCH") action = options.action || "update";
+      else if (method === "DELETE") action = options.action || "delete";
+      else if (method === "GET") action = options.action || "view";
 
       // Determine resource from route
       const path = req.path;
-      let resource = "unknown";
-      if (path.includes("/users")) resource = "user";
-      else if (path.includes("/roles")) resource = "role";
-      else if (path.includes("/tasks")) resource = "task";
-      else if (path.includes("/projects")) resource = "project";
-      else if (path.includes("/teams")) resource = "team";
-      else if (path.includes("/settings")) resource = "setting";
-      else if (path.includes("/api-keys")) resource = "api";
-      else if (path.includes("/audit")) resource = "audit";
+      let resource = options.resource || "unknown";
+
+      if (!options.resource) {
+        if (path.includes("/users") || path.includes("/user")) resource = "user";
+        else if (path.includes("/roles") || path.includes("/role")) resource = "role";
+        else if (path.includes("/tasks") || path.includes("/task")) resource = "task";
+        else if (path.includes("/projects") || path.includes("/project")) resource = "project";
+        else if (path.includes("/teams") || path.includes("/team")) resource = "team";
+        else if (path.includes("/settings") || path.includes("/setting")) resource = "setting";
+        else if (path.includes("/api-keys")) resource = "api";
+        else if (path.includes("/audit")) resource = "audit";
+        else if (path.includes("/pricing")) resource = "pricing_plan";
+        else if (path.includes("/billing")) resource = "billing";
+        else if (path.includes("/subscription")) resource = "subscription";
+      }
 
       // Create log data
       const logData = {
-        action: options.action || action,
-        resource: options.resource || resource,
+        action: action,
+        resource: resource,
         resourceId: req.params.id || null,
         userId: req.user._id,
         user: {
           id: req.user._id,
-          name: req.user.name,
-          email: req.user.email,
-          role: req.user.role,
+          name: req.user.fullName || req.user.name || "Unknown",
+          email: req.user.email || "unknown@example.com",
+          role: req.user.role || "user",
         },
-        ip,
-        userAgent,
-        device: ua.device?.model || "Unknown",
-        location,
+        ip: ip,
+        userAgent: userAgent,
+        device: "Unknown",
+        location: "Unknown",
         details: {
           method: req.method,
           path: req.path,
           query: req.query,
           body: req.body,
           params: req.params,
-          statusCode,
+          statusCode: statusCode,
           response: responseData,
-          userAgent: req.headers["user-agent"],
         },
-        status,
+        status: status,
         severity: options.severity || severity,
         metadata: {
-          browser: ua.browser?.name || "Unknown",
-          os: ua.os?.name || "Unknown",
-          platform: ua.os?.platform || "Unknown",
+          browser: "Unknown",
+          os: "Unknown",
+          platform: "Unknown",
         },
       };
 

@@ -169,7 +169,10 @@ const settingRoutes = require("./src/routes/setting.routes");
 const auditLogRoutes = require("./src/routes/auditLog.routes");
 const backupRoutes = require("./src/routes/backup.routes");
 const supportTicketRoutes = require("./src/routes/supportTicket.routes");
+const billingRoutes = require("./src/routes/billing.routes");
 const systemStatusRoutes = require("./src/routes/systemStatus.routes");
+const { authenticate, requireRole } = require("./src/middleware/auth.middleware");
+const pricingPlanRoutes = require("./src/routes/pricingPlan.routes");
 
 
 
@@ -198,6 +201,11 @@ app.use("/api/v1/audit-logs", auditLogRoutes);
 app.use("/api/v1/backup", backupRoutes);
 app.use("/api/v1/support/tickets", supportTicketRoutes);
 app.use("/api/v1/system", systemStatusRoutes);
+app.use("/api/v1/billing", billingRoutes);
+app.use("/api/v1/pricing-plans", pricingPlanRoutes);
+
+
+
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
   res.json({
@@ -377,6 +385,26 @@ process.on("unhandledRejection", (reason, promise) => {
 
 process.on("uncaughtException", (error) => {
   console.error("❌ Uncaught Exception:", error);
+});
+
+// server.js - If you added the debug route, make sure it's correct
+
+// Debug route - Add this AFTER your middleware imports and BEFORE the 404 handler
+app.get("/api/debug/users", authenticate, requireRole("super_admin", "admin"), async (req, res) => {
+    try {
+        const users = await User.find().select("email fullName trial subscription createdAt");
+        res.json({
+            success: true,
+            data: users,
+            count: users.length
+        });
+    } catch (error) {
+        console.error("Debug users error:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: error.message 
+        });
+    }
 });
 
 startServer();

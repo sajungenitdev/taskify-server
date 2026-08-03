@@ -1,100 +1,154 @@
 // models/AuditLog.model.js
 const mongoose = require("mongoose");
 
-const auditLogSchema = new mongoose.Schema({
-    action: {
-        type: String,
-        required: true,
-        enum: [
-            "login", "logout", "create", "update", "delete", "view",
-            "export", "import", "share", "copy", "move", "archive",
-            "restore", "approve", "reject", "lock", "unlock",
-            "assign", "unassign", "invite", "remove", "enable",
-            "disable", "reset", "change",
-            "admin_create_user",
-            "register",
-        ],
-    },
-    resource: {
-        type: String,
-        required: true,
-        enum: [
-            "user", "users", "role", "roles", "permission", "permissions",
-            "task", "tasks", "project", "projects", "team", "teams",
-            "setting", "settings", "audit", "logs", "api", "keys",
-            "report", "reports", "notification", "notifications",
-            "message", "messages", "department", "departments"
-        ],
-    },
-    resourceId: {
-        type: String,
-        default: null,
-    },
-    userId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-        required: true,
-    },
-    user: {
-        id: {
+const auditLogSchema = new mongoose.Schema(
+    {
+        action: {
             type: String,
-            default: null
+            required: true,
+            enum: [
+                "login",
+                "logout",
+                "create",
+                "update",
+                "delete",
+                "view",
+                "export",
+                "import",
+                "share",
+                "copy",
+                "move",
+                "archive",
+                "restore",
+                "approve",
+                "reject",
+                "lock",
+                "unlock",
+                "assign",
+                "unassign",
+                "invite",
+                "remove",
+                "enable",
+                "disable",
+                "reset",
+                "change",
+                "admin_create_user",
+                "register",
+                "cancel_subscription",
+                "create_plan",
+                "update_plan",
+                "delete_plan",
+                "toggle_plan",
+                "set_plan_order",
+            ],
         },
-        name: {
+        resource: {
             type: String,
-            default: "System" // ✅ Add default value
+            required: true,
+            enum: [
+                "user",
+                "users",
+                "role",
+                "roles",
+                "permission",
+                "permissions",
+                "task",
+                "tasks",
+                "project",
+                "projects",
+                "team",
+                "teams",
+                "setting",
+                "settings",
+                "audit",
+                "logs",
+                "api",
+                "keys",
+                "report",
+                "reports",
+                "notification",
+                "notifications",
+                "message",
+                "messages",
+                "department",
+                "departments",
+                "pricing_plan", // ✅ ADDED
+                "billing",
+                "invoice",
+                "subscription",
+                "transaction",
+                "payment_method",
+            ],
         },
-        email: {
+        resourceId: {
             type: String,
-            default: "system@example.com" // ✅ Add default value
+            default: null,
         },
-        role: {
+        userId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: false, // ✅ Changed to false for system actions
+        },
+        user: {
+            id: {
+                type: String,
+                default: null,
+            },
+            name: {
+                type: String,
+                default: "System",
+            },
+            email: {
+                type: String,
+                default: "system@example.com",
+            },
+            role: {
+                type: String,
+                default: "system",
+            },
+        },
+        ip: {
             type: String,
-            default: "system" // ✅ Add default value
+            required: false,
+            default: "0.0.0.0",
+        },
+        userAgent: {
+            type: String,
+            required: false,
+            default: "Unknown",
+        },
+        device: {
+            type: String,
+            default: "Unknown",
+        },
+        location: {
+            type: String,
+            default: "Unknown",
+        },
+        details: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+        },
+        status: {
+            type: String,
+            enum: ["success", "failed", "warning", "info"],
+            default: "success",
+        },
+        severity: {
+            type: String,
+            enum: ["low", "medium", "high", "critical"],
+            default: "low",
+        },
+        metadata: {
+            browser: { type: String, default: "Unknown" },
+            os: { type: String, default: "Unknown" },
+            platform: { type: String, default: "Unknown" },
         },
     },
-    ip: {
-        type: String,
-        required: true,
-    },
-    userAgent: {
-        type: String,
-        required: true,
-    },
-    device: {
-        type: String,
-        default: "Unknown",
-    },
-    location: {
-        type: String,
-        default: "Unknown",
-    },
-    details: {
-        type: mongoose.Schema.Types.Mixed,
-        default: {},
-    },
-    status: {
-        type: String,
-        enum: ["success", "failed", "warning", "info"],
-        default: "success",
-    },
-    severity: {
-        type: String,
-        enum: ["low", "medium", "high", "critical"],
-        default: "low",
-    },
-    metadata: {
-        browser: { type: String, default: "Unknown" },
-        os: { type: String, default: "Unknown" },
-        platform: { type: String, default: "Unknown" },
-    },
-    createdAt: {
-        type: Date,
-        default: Date.now,
-    },
-}, {
-    timestamps: true,
-});
+    {
+        timestamps: true,
+    }
+);
 
 // Indexes for faster queries
 auditLogSchema.index({ createdAt: -1 });
@@ -106,9 +160,14 @@ auditLogSchema.index({ severity: 1, createdAt: -1 });
 
 // Static method to create audit log
 auditLogSchema.statics.createLog = async function (data) {
-    const log = new this(data);
-    await log.save();
-    return log;
+    try {
+        const log = new this(data);
+        await log.save();
+        return log;
+    } catch (error) {
+        console.error("Failed to create audit log:", error);
+        return null;
+    }
 };
 
 // Static method to get stats
