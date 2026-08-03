@@ -70,5 +70,5 @@ async function migratePlanType() {
     }
 }
 
-// Run the migration
+// Run the migration /
 migratePlanType();
