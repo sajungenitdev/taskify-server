@@ -418,6 +418,8 @@ const getMe = async (req, res) => {
 
 // controllers/auth.controller.js - Updated register function
 
+// controllers/auth.controller.js - Fixed register function
+
 const register = async (req, res) => {
   try {
     const {
@@ -521,7 +523,7 @@ const register = async (req, res) => {
 
     const user = await User.create(userData);
 
-    // ✅ STEP 1: Send response IMMEDIATELY
+    // ✅ Send response FIRST (before email/audit logs)
     const userResponse = sanitizeUser(user);
     const responseData = { user: userResponse };
 
@@ -536,15 +538,17 @@ const register = async (req, res) => {
       responseData.message = "User created successfully by admin.";
     }
 
+    // ✅ Send response immediately
     res.status(201).json({
       success: true,
       message: responseData.message,
       data: responseData,
     });
 
-    // ✅ STEP 2: Do background tasks AFTER response
+    // ✅ Do background tasks AFTER response (don't block)
     setImmediate(async () => {
       try {
+        // Send email in background
         if (!isAdminCreation) {
           await sendTrialWelcomeEmail(user, password, trialDays || 7, trialEndDate, plan);
         } else {
@@ -554,6 +558,7 @@ const register = async (req, res) => {
         console.error('⚠️ Background email failed:', emailError.message);
       }
 
+      // Create audit log in background
       try {
         await createAuditLog({
           action: isAdminCreation ? "admin_create_user" : "register",
@@ -595,7 +600,6 @@ const register = async (req, res) => {
 // ============================================================
 // ADMIN CREATE USER (No trial) - FIXED
 // ============================================================
-// controllers/auth.controller.js - Updated adminCreateUser
 
 const adminCreateUser = async (req, res) => {
   try {
@@ -675,8 +679,10 @@ const adminCreateUser = async (req, res) => {
 
     const user = await User.create(userData);
 
-    // ✅ STEP 1: Send response IMMEDIATELY
+    // ✅ STEP 1: Send response IMMEDIATELY (before email/audit logs)
     const userResponse = sanitizeUser(user);
+
+    console.log(`✅ User created: ${user.email}`);
 
     res.status(201).json({
       success: true,
@@ -686,9 +692,14 @@ const adminCreateUser = async (req, res) => {
 
     // ✅ STEP 2: Do background tasks AFTER response
     setImmediate(async () => {
+      // Send welcome email in background
       try {
-        // Send welcome email in background
-        await sendAdminCreatedWelcomeEmail(user, password);
+        if (user && user.email) {
+          await sendAdminCreatedWelcomeEmail(user, password);
+          console.log(`✅ Welcome email sent to ${user.email}`);
+        } else {
+          console.log('⚠️ Skipping email - no user email found');
+        }
       } catch (emailError) {
         console.error('⚠️ Background email failed:', emailError.message);
       }
@@ -699,12 +710,17 @@ const adminCreateUser = async (req, res) => {
           action: "admin_create_user",
           resource: "user",
           resourceId: user._id,
-          userId: req.user._id,
-          user: {
+          userId: req.user?._id || null,
+          user: req.user ? {
             id: req.user._id,
-            name: req.user.fullName,
+            name: req.user.fullName || req.user.name,
             email: req.user.email,
             role: req.user.role,
+          } : {
+            id: null,
+            name: "System",
+            email: "system@example.com",
+            role: "system",
           },
           ip: req.ip || req.connection.remoteAddress,
           userAgent: req.headers["user-agent"] || "Unknown",
@@ -717,6 +733,7 @@ const adminCreateUser = async (req, res) => {
           status: "success",
           severity: "low",
         });
+        console.log(`✅ Audit log created for ${user.email}`);
       } catch (auditError) {
         console.error('⚠️ Background audit log failed:', auditError.message);
       }
@@ -728,6 +745,7 @@ const adminCreateUser = async (req, res) => {
           const dept = await Department.findById(department);
           if (dept) {
             await dept.updateEmployeeCount();
+            console.log(`✅ Department count updated for ${dept.name}`);
           }
         } catch (deptError) {
           console.error('⚠️ Background department update failed:', deptError.message);
@@ -753,11 +771,19 @@ const adminCreateUser = async (req, res) => {
   }
 };
 
+// controllers/auth.controller.js - Add this function if missing
+
 // ============================================================
 // SEND TRIAL WELCOME EMAIL
 // ============================================================
 const sendTrialWelcomeEmail = async (user, tempPassword, trialDays, trialEndDate, plan) => {
   try {
+    // ✅ Validate user and email
+    if (!user || !user.email) {
+      console.error('❌ Cannot send trial email: User or email missing');
+      return { success: false, message: 'User or email missing' };
+    }
+
     const planNames = {
       individual: "Individual",
       team: "Team",
@@ -848,23 +874,40 @@ const sendTrialWelcomeEmail = async (user, tempPassword, trialDays, trialEndDate
       </html>
     `;
 
-    await sendEmail({
+    const result = await sendEmail({
       to: user.email,
       subject: `🎉 Welcome to TaskFlow! Your ${trialDays}-Day Free Trial`,
       html: emailHTML,
     });
 
-    console.log(`✅ Trial welcome email sent to ${user.email}`);
+    if (result && result.success) {
+      console.log(`✅ Trial welcome email sent to ${user.email}`);
+      return { success: true };
+    } else {
+      console.error(`❌ Failed to send trial email to ${user.email}:`, result?.error || 'Unknown error');
+      return { success: false, error: result?.error || 'Unknown error' };
+    }
   } catch (error) {
     console.error("Error sending trial email:", error);
+    return { success: false, error: error.message };
   }
 };
+
+// controllers/auth.controller.js - Add this function if missing
 
 // ============================================================
 // SEND ADMIN CREATED WELCOME EMAIL (No trial)
 // ============================================================
 const sendAdminCreatedWelcomeEmail = async (user, tempPassword) => {
   try {
+    // ✅ Validate user and email
+    if (!user || !user.email) {
+      console.error('❌ Cannot send email: User or email missing');
+      return { success: false, message: 'User or email missing' };
+    }
+
+    console.log(`📧 Preparing welcome email for: ${user.email}`);
+
     const emailHTML = `
       <!DOCTYPE html>
       <html>
@@ -891,13 +934,13 @@ const sendAdminCreatedWelcomeEmail = async (user, tempPassword) => {
             <p>Your account has been created</p>
           </div>
           <div class="content">
-            <h2>Hi ${user.fullName}!</h2>
+            <h2>Hi ${user.fullName || 'User'}!</h2>
             <p>An administrator has created your TaskFlow account. You're ready to start managing your tasks!</p>
 
             <h3>Your Account Details:</h3>
             <div class="credentials">
               <p><strong>Email:</strong> ${user.email}</p>
-              <p><strong>Password:</strong> <code>${tempPassword}</code></p>
+              <p><strong>Password:</strong> <code>${tempPassword || 'Please contact your administrator'}</code></p>
               <p style="font-size: 12px; color: #94a3b8;">We recommend changing your password after first login.</p>
             </div>
 
@@ -915,19 +958,25 @@ const sendAdminCreatedWelcomeEmail = async (user, tempPassword) => {
       </html>
     `;
 
-    await sendEmail({
+    // ✅ Send email with proper validation
+    const result = await sendEmail({
       to: user.email,
       subject: "🚀 Welcome to TaskFlow - Your Account is Ready",
       html: emailHTML,
     });
 
-    console.log(`✅ Admin created welcome email sent to ${user.email}`);
+    if (result && result.success) {
+      console.log(`✅ Admin created welcome email sent to ${user.email}`);
+      return { success: true };
+    } else {
+      console.error(`❌ Failed to send email to ${user.email}:`, result?.error || 'Unknown error');
+      return { success: false, error: result?.error || 'Unknown error' };
+    }
   } catch (error) {
     console.error("Error sending admin welcome email:", error);
+    return { success: false, error: error.message };
   }
 };
-
-
 // ============================================================
 // GET ALL USERS
 // ============================================================
