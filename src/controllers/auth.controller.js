@@ -536,7 +536,6 @@ const register = async (req, res) => {
       responseData.message = "User created successfully by admin.";
     }
 
-    // ✅ Send response right away
     res.status(201).json({
       success: true,
       message: responseData.message,
@@ -544,10 +543,8 @@ const register = async (req, res) => {
     });
 
     // ✅ STEP 2: Do background tasks AFTER response
-    // Use setImmediate to run these in the background
     setImmediate(async () => {
       try {
-        // Send email in background
         if (!isAdminCreation) {
           await sendTrialWelcomeEmail(user, password, trialDays || 7, trialEndDate, plan);
         } else {
@@ -557,7 +554,6 @@ const register = async (req, res) => {
         console.error('⚠️ Background email failed:', emailError.message);
       }
 
-      // Create audit log in background
       try {
         await createAuditLog({
           action: isAdminCreation ? "admin_create_user" : "register",
@@ -599,6 +595,8 @@ const register = async (req, res) => {
 // ============================================================
 // ADMIN CREATE USER (No trial) - FIXED
 // ============================================================
+// controllers/auth.controller.js - Updated adminCreateUser
+
 const adminCreateUser = async (req, res) => {
   try {
     const {
@@ -647,20 +645,19 @@ const adminCreateUser = async (req, res) => {
 
     const finalEmployeeId = employeeId || `EMP${Date.now().toString().slice(-6)}`;
 
-    // ✅ Admin creates user - NO trial, active immediately
+    // Admin creates user - NO trial, active immediately
     const userData = {
       fullName,
       email: email.toLowerCase(),
-      password, // Will be hashed by pre-save middleware
+      password,
       employeeId: finalEmployeeId,
       role: userRole,
       roles: roleId ? [roleId] : [],
       department: department || null,
       phoneNumber: phoneNumber || null,
       isActive: true,
-      isEmailVerified: true, // Admin created users are verified
+      isEmailVerified: true,
       firstLogin: true,
-      // ✅ NO trial data
       subscription: {
         status: "active",
         plan: "enterprise",
@@ -678,42 +675,7 @@ const adminCreateUser = async (req, res) => {
 
     const user = await User.create(userData);
 
-    // Send admin-created welcome email (no trial info)
-    await sendAdminCreatedWelcomeEmail(user, password);
-
-    // Create audit log
-    await createAuditLog({
-      action: "admin_create_user",
-      resource: "user",
-      resourceId: user._id,
-      userId: req.user._id,
-      user: {
-        id: req.user._id,
-        name: req.user.fullName,
-        email: req.user.email,
-        role: req.user.role,
-      },
-      ip: req.ip || req.connection.remoteAddress,
-      userAgent: req.headers["user-agent"] || "Unknown",
-      details: {
-        method: "POST",
-        path: "/auth/admin/create-user",
-        status: "success",
-        createdUser: user.email,
-      },
-      status: "success",
-      severity: "low",
-    });
-
-    // Update department employee count if department is provided
-    if (department) {
-      const { Department } = require("../models/Department.model");
-      const dept = await Department.findById(department);
-      if (dept) {
-        await dept.updateEmployeeCount();
-      }
-    }
-
+    // ✅ STEP 1: Send response IMMEDIATELY
     const userResponse = sanitizeUser(user);
 
     res.status(201).json({
@@ -721,10 +683,61 @@ const adminCreateUser = async (req, res) => {
       message: "User created successfully",
       data: { user: userResponse },
     });
+
+    // ✅ STEP 2: Do background tasks AFTER response
+    setImmediate(async () => {
+      try {
+        // Send welcome email in background
+        await sendAdminCreatedWelcomeEmail(user, password);
+      } catch (emailError) {
+        console.error('⚠️ Background email failed:', emailError.message);
+      }
+
+      // Create audit log in background
+      try {
+        await createAuditLog({
+          action: "admin_create_user",
+          resource: "user",
+          resourceId: user._id,
+          userId: req.user._id,
+          user: {
+            id: req.user._id,
+            name: req.user.fullName,
+            email: req.user.email,
+            role: req.user.role,
+          },
+          ip: req.ip || req.connection.remoteAddress,
+          userAgent: req.headers["user-agent"] || "Unknown",
+          details: {
+            method: "POST",
+            path: "/auth/admin/create-user",
+            status: "success",
+            createdUser: user.email,
+          },
+          status: "success",
+          severity: "low",
+        });
+      } catch (auditError) {
+        console.error('⚠️ Background audit log failed:', auditError.message);
+      }
+
+      // Update department employee count in background
+      if (department) {
+        try {
+          const { Department } = require("../models/Department.model");
+          const dept = await Department.findById(department);
+          if (dept) {
+            await dept.updateEmployeeCount();
+          }
+        } catch (deptError) {
+          console.error('⚠️ Background department update failed:', deptError.message);
+        }
+      }
+    });
+
   } catch (error) {
     console.error("Admin create user error:", error);
 
-    // Check for validation errors
     if (error.name === "ValidationError") {
       const errors = Object.values(error.errors).map((err) => err.message);
       return res.status(400).json({
