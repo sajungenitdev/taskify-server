@@ -1,4 +1,3 @@
-// models/PricingPlan.model.js
 const mongoose = require("mongoose");
 
 const pricingPlanSchema = new mongoose.Schema(
@@ -22,6 +21,13 @@ const pricingPlanSchema = new mongoose.Schema(
         icon: {
             type: String,
             default: "Users",
+        },
+        // ✅ PLAN TYPE - NEW FIELD
+        planType: {
+            type: String,
+            enum: ["individual", "team"],
+            required: [true, "Plan type is required"],
+            default: "individual",
         },
         isActive: {
             type: Boolean,
@@ -105,6 +111,7 @@ const pricingPlanSchema = new mongoose.Schema(
 pricingPlanSchema.index({ slug: 1 });
 pricingPlanSchema.index({ isActive: 1 });
 pricingPlanSchema.index({ order: 1 });
+pricingPlanSchema.index({ planType: 1 }); // ✅ ADD INDEX FOR PLAN TYPE
 
 // Pre-save middleware to generate slug
 pricingPlanSchema.pre("save", function (next) {
@@ -139,10 +146,10 @@ pricingPlanSchema.pre("validate", function (next) {
 
 // Method to get formatted price
 pricingPlanSchema.methods.getFormattedPrice = function () {
-    const finalPrice = this.discount > 0 
-        ? this.price * (1 - this.discount / 100) 
+    const finalPrice = this.discount > 0
+        ? this.price * (1 - this.discount / 100)
         : this.price;
-    
+
     return {
         price: this.price,
         discount: this.discount,
@@ -152,7 +159,17 @@ pricingPlanSchema.methods.getFormattedPrice = function () {
         billingCycle: this.billingCycle,
         isOneTime: this.isOneTime,
         contactSales: this.contactSales,
+        planType: this.planType,
     };
+};
+
+// Static method to get active plans by type
+pricingPlanSchema.statics.getActivePlansByType = function (planType) {
+    const filter = { isActive: true };
+    if (planType && ["individual", "team"].includes(planType)) {
+        filter.planType = planType;
+    }
+    return this.find(filter).sort({ order: 1, name: 1 });
 };
 
 // Static method to get active plans

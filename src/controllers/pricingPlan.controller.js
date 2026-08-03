@@ -1,20 +1,25 @@
-// controllers/pricingPlan.controller.js
 const { PricingPlan } = require("../models/PricingPlan.model");
 const { createAuditLog } = require("./auditLog.controller");
 
 // ============================================================
-// GET ALL PLANS (Public)
+// GET ALL PLANS (Public) - with planType filter
 // ============================================================
 const getPlans = async (req, res) => {
     try {
-        const plans = await PricingPlan.find({ isActive: true }).sort({ order: 1, name: 1 });
+        // ✅ Support planType filtering
+        const { planType } = req.query;
+        const filter = { isActive: true };
+
+        if (planType && ["individual", "team"].includes(planType)) {
+            filter.planType = planType;
+        }
+
+        const plans = await PricingPlan.find(filter).sort({ order: 1, name: 1 });
 
         // Format response with calculated prices
         const formattedPlans = plans.map((plan) => {
-            // Convert to plain object
             const planObj = plan.toObject();
 
-            // Calculate price with discount
             let finalPrice = planObj.price || 0;
             let savings = 0;
 
@@ -27,7 +32,6 @@ const getPlans = async (req, res) => {
                 ...planObj,
                 finalPrice: Math.round(finalPrice),
                 savings: Math.round(savings),
-                // Keep original pricing info
                 originalPrice: planObj.price,
                 currency: planObj.currency || "BDT",
             };
@@ -95,7 +99,15 @@ const getPlanBySlug = async (req, res) => {
 // ============================================================
 const getAllPlansAdmin = async (req, res) => {
     try {
-        const plans = await PricingPlan.find().sort({ order: 1, name: 1 });
+        // ✅ Support planType filtering for admin
+        const { planType } = req.query;
+        const filter = {};
+
+        if (planType && ["individual", "team"].includes(planType)) {
+            filter.planType = planType;
+        }
+
+        const plans = await PricingPlan.find(filter).sort({ order: 1, name: 1 });
 
         const formattedPlans = plans.map((plan) => {
             const planObj = plan.toObject();
@@ -139,6 +151,7 @@ const createPlan = async (req, res) => {
             name,
             description,
             icon,
+            planType, // ✅ NEW FIELD
             isPopular,
             billingCycle,
             price,
@@ -159,6 +172,14 @@ const createPlan = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "Plan name is required",
+            });
+        }
+
+        // ✅ Validate planType
+        if (!planType || !["individual", "team"].includes(planType)) {
+            return res.status(400).json({
+                success: false,
+                message: "Plan type is required and must be 'individual' or 'team'",
             });
         }
 
@@ -194,6 +215,7 @@ const createPlan = async (req, res) => {
             slug: slug,
             description: description || "",
             icon: icon || "Users",
+            planType: planType, // ✅ ADD PLAN TYPE
             isPopular: isPopular || false,
             isActive: true,
             billingCycle: billingCycle || "monthly",
@@ -244,6 +266,7 @@ const createPlan = async (req, res) => {
                     status: "success",
                     planName: plan.name,
                     planSlug: plan.slug,
+                    planType: plan.planType,
                 },
                 status: "success",
                 severity: "low",
@@ -300,6 +323,14 @@ const updatePlan = async (req, res) => {
             });
         }
 
+        // ✅ Validate planType if being updated
+        if (updates.planType && !["individual", "team"].includes(updates.planType)) {
+            return res.status(400).json({
+                success: false,
+                message: "Plan type must be 'individual' or 'team'",
+            });
+        }
+
         // Prevent duplicate name
         if (updates.name && updates.name !== plan.name) {
             const existingPlan = await PricingPlan.findOne({
@@ -348,6 +379,7 @@ const updatePlan = async (req, res) => {
                     path: "/api/v1/pricing-plans/" + id,
                     status: "success",
                     planName: updatedPlan.name,
+                    planType: updatedPlan.planType,
                 },
                 status: "success",
                 severity: "low",
