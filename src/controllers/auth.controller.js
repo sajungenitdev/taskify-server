@@ -418,6 +418,8 @@ const getMe = async (req, res) => {
 
 // controllers/auth.controller.js - Updated register function
 
+// controllers/auth.controller.js - Fixed register function
+
 const register = async (req, res) => {
   try {
     const {
@@ -433,7 +435,8 @@ const register = async (req, res) => {
       currency,
       period,
       trialDays = 7,
-      isAdminCreation = false, // Flag to check if admin is creating
+      isAdminCreation = false,
+      role,
     } = req.body;
 
     if (!fullName || !email || !password) {
@@ -463,6 +466,9 @@ const register = async (req, res) => {
     // Generate employee ID
     const employeeId = `EMP${Date.now().toString().slice(-6)}`;
 
+    // ✅ Define trialEndDate outside the if block
+    let trialEndDate = null;
+
     // Prepare user data
     const userData = {
       fullName,
@@ -475,14 +481,14 @@ const register = async (req, res) => {
       role: userRole,
       roles: roleId ? [roleId] : [],
       isActive: true,
-      isEmailVerified: false, // Will be verified via email
+      isEmailVerified: false,
       firstLogin: true,
     };
 
     // ✅ ONLY add trial if it's self-registration (not admin creation)
     if (!isAdminCreation) {
       // Calculate trial end date (7 days from now)
-      const trialEndDate = new Date();
+      trialEndDate = new Date();
       trialEndDate.setDate(trialEndDate.getDate() + (trialDays || 7));
 
       userData.trial = {
