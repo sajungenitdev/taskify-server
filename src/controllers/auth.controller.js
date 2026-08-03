@@ -418,8 +418,6 @@ const getMe = async (req, res) => {
 
 // controllers/auth.controller.js - Updated register function
 
-// controllers/auth.controller.js - Fixed register function
-
 const register = async (req, res) => {
   try {
     const {
@@ -454,7 +452,17 @@ const register = async (req, res) => {
         message: "User with this email already exists",
       });
     }
-
+    if (phone && phone.trim()) {
+      const existingPhone = await User.findOne({ phoneNumber: phone.trim() });
+      if (existingPhone) {
+        return res.status(400).json({
+          success: false,
+          message: "User with this phone number already exists",
+          field: "phone",
+          value: phone,
+        });
+      }
+    }
     // Get default role
     let userRole = role || "employee";
     let roleId = null;
@@ -1953,7 +1961,7 @@ const changeUserPassword = async (req, res) => {
     // ✅ Directly hash the password using bcrypt
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
+
     console.log("🔑 Hashed password created:", hashedPassword.substring(0, 30) + "...");
 
     // ✅ Update using findByIdAndUpdate to bypass pre-save issues
