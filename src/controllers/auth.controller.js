@@ -99,6 +99,8 @@ const getActiveUsers = async (req, res) => {
 // ============================================================
 // LOGIN
 // ============================================================
+// controllers/auth.controller.js - Fix login function
+
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -110,8 +112,9 @@ const login = async (req, res) => {
       });
     }
 
+    // ✅ Make sure to select the password field
     const user = await User.findOne({ email: email.toLowerCase() })
-      .select("+password")
+      .select("+password") // ✅ This is important
       .populate("department", "name code")
       .populate("roles", "name code level");
 
@@ -157,7 +160,12 @@ const login = async (req, res) => {
       });
     }
 
+    console.log("👤 User found:", user.email);
+    console.log("🔐 Stored password hash:", user.password ? "Exists" : "Missing");
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    console.log("✅ Password valid:", isPasswordValid);
+
     if (!isPasswordValid) {
       // Log failed login attempt
       await createAuditLog({
@@ -194,7 +202,7 @@ const login = async (req, res) => {
       });
     }
 
-    // Successful login - update last login
+    // ✅ Successful login - update last login
     user.lastLogin = new Date();
     await user.save();
 
@@ -416,11 +424,16 @@ const register = async (req, res) => {
       fullName,
       email,
       password,
-      employeeId,
-      role,
-      department,
-      phoneNumber,
-      profilePhoto,
+      phone,
+      companyName,
+      jobTitle,
+      plan,
+      billingCycle,
+      price,
+      currency,
+      period,
+      trialDays = 7,
+      isAdminCreation = false, // Flag to check if admin is creating
     } = req.body;
 
     if (!fullName || !email || !password) {
@@ -430,20 +443,191 @@ const register = async (req, res) => {
       });
     }
 
-    const existingUser = await User.findOne({
-      $or: [{ email: email.toLowerCase() }, { employeeId }],
-    });
-
+    // Check if user exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message:
-          existingUser.email === email
-            ? "User with this email already exists"
-            : "Employee ID already exists",
+        message: "User with this email already exists",
       });
     }
 
+    // Get default role
+    let userRole = role || "employee";
+    let roleId = null;
+    const defaultRole = await Role.findOne({ code: "EMPLOYEE" });
+    if (defaultRole) {
+      roleId = defaultRole._id;
+    }
+
+    // Generate employee ID
+    const employeeId = `EMP${Date.now().toString().slice(-6)}`;
+
+    // Prepare user data
+    const userData = {
+      fullName,
+      email: email.toLowerCase(),
+      password,
+      employeeId,
+      phoneNumber: phone || null,
+      companyName: companyName || null,
+      jobTitle: jobTitle || null,
+      role: userRole,
+      roles: roleId ? [roleId] : [],
+      isActive: true,
+      isEmailVerified: false, // Will be verified via email
+      firstLogin: true,
+    };
+
+    // ✅ ONLY add trial if it's self-registration (not admin creation)
+    if (!isAdminCreation) {
+      // Calculate trial end date (7 days from now)
+      const trialEndDate = new Date();
+      trialEndDate.setDate(trialEndDate.getDate() + (trialDays || 7));
+
+      userData.trial = {
+        isActive: true,
+        startDate: new Date(),
+        endDate: trialEndDate,
+        daysLeft: trialDays || 7,
+        plan: plan || "individual",
+        billingCycle: billingCycle || "monthly",
+        price: price || 0,
+        currency: currency || "USD",
+        period: period || "month",
+      };
+
+      userData.subscription = {
+        status: "trial",
+        plan: plan || "individual",
+        billingCycle: billingCycle || "monthly",
+        price: price || 0,
+        currency: currency || "USD",
+        startDate: new Date(),
+        trialEndDate: trialEndDate,
+      };
+    } else {
+      // Admin created user - no trial, set as active immediately
+      userData.isActive = true;
+      userData.isEmailVerified = true;
+      userData.subscription = {
+        status: "active",
+        plan: "enterprise",
+        billingCycle: "monthly",
+        price: 0,
+        currency: "USD",
+        startDate: new Date(),
+      };
+    }
+
+    const user = await User.create(userData);
+
+    // ✅ ONLY send trial email for self-registration
+    if (!isAdminCreation) {
+      // Send welcome email with trial information
+      await sendTrialWelcomeEmail(user, password, trialDays || 7, trialEndDate, plan);
+    } else {
+      // Send simple welcome email for admin-created users
+      await sendAdminCreatedWelcomeEmail(user, password);
+    }
+
+    // Create audit log
+    await createAuditLog({
+      action: isAdminCreation ? "admin_create_user" : "register",
+      resource: "user",
+      resourceId: user._id,
+      userId: user._id,
+      user: {
+        id: user._id,
+        name: user.fullName,
+        email: user.email,
+        role: user.role,
+      },
+      ip: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      details: {
+        method: "POST",
+        path: "/auth/register",
+        status: "success",
+        isAdminCreation: isAdminCreation,
+        plan: plan || "individual",
+        trialDays: isAdminCreation ? 0 : (trialDays || 7),
+      },
+      status: "success",
+      severity: "low",
+      metadata: {
+        browser: req.headers["user-agent"] || "Unknown",
+        os: "Unknown",
+        platform: "Unknown",
+      },
+    });
+
+    // Return user response
+    const userResponse = sanitizeUser(user);
+
+    const responseData = {
+      user: userResponse,
+    };
+
+    // ✅ Only include trial info for self-registration
+    if (!isAdminCreation) {
+      responseData.trial = {
+        isActive: true,
+        daysLeft: trialDays || 7,
+        endDate: trialEndDate,
+      };
+      responseData.message = `Account created successfully! Your ${trialDays || 7}-day free trial has started.`;
+    } else {
+      responseData.message = "User created successfully by admin.";
+    }
+
+    res.status(201).json({
+      success: true,
+      message: responseData.message,
+      data: responseData,
+    });
+  } catch (error) {
+    console.error("Register error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+// ============================================================
+// ADMIN CREATE USER (No trial) - FIXED
+// ============================================================
+const adminCreateUser = async (req, res) => {
+  try {
+    const {
+      fullName,
+      email,
+      password,
+      phoneNumber,
+      role,
+      department,
+      employeeId,
+      profilePhoto,
+    } = req.body;
+
+    // Validate required fields
+    if (!fullName || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Full name, email, and password are required",
+      });
+    }
+
+    // Check if user exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User with this email already exists",
+      });
+    }
+
+    // Get role
     let userRole = role || "employee";
     let roleId = null;
 
@@ -459,22 +643,30 @@ const register = async (req, res) => {
       }
     }
 
-    // ✅ REMOVE THIS - Don't hash here, let the pre-save middleware handle it
-    // const hashedPassword = await bcrypt.hash(password, 10);
+    const finalEmployeeId = employeeId || `EMP${Date.now().toString().slice(-6)}`;
 
-    const finalEmployeeId = employeeId || `EMP${Date.now()}`;
-
+    // ✅ Admin creates user - NO trial, active immediately
     const userData = {
       fullName,
       email: email.toLowerCase(),
-      password: password, // ✅ Pass plain password - model will hash it
+      password, // Will be hashed by pre-save middleware
       employeeId: finalEmployeeId,
       role: userRole,
       roles: roleId ? [roleId] : [],
       department: department || null,
       phoneNumber: phoneNumber || null,
       isActive: true,
+      isEmailVerified: true, // Admin created users are verified
       firstLogin: true,
+      // ✅ NO trial data
+      subscription: {
+        status: "active",
+        plan: "enterprise",
+        billingCycle: "monthly",
+        price: 0,
+        currency: "USD",
+        startDate: new Date(),
+      },
     };
 
     if (profilePhoto) {
@@ -482,8 +674,36 @@ const register = async (req, res) => {
       userData.avatar = profilePhoto;
     }
 
-    const user = await User.create(userData); // ✅ pre-save middleware will hash the password
+    const user = await User.create(userData);
 
+    // Send admin-created welcome email (no trial info)
+    await sendAdminCreatedWelcomeEmail(user, password);
+
+    // Create audit log
+    await createAuditLog({
+      action: "admin_create_user",
+      resource: "user",
+      resourceId: user._id,
+      userId: req.user._id,
+      user: {
+        id: req.user._id,
+        name: req.user.fullName,
+        email: req.user.email,
+        role: req.user.role,
+      },
+      ip: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      details: {
+        method: "POST",
+        path: "/auth/admin/create-user",
+        status: "success",
+        createdUser: user.email,
+      },
+      status: "success",
+      severity: "low",
+    });
+
+    // Update department employee count if department is provided
     if (department) {
       const { Department } = require("../models/Department.model");
       const dept = await Department.findById(department);
@@ -496,17 +716,202 @@ const register = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "User registered successfully",
-      data: userResponse,
+      message: "User created successfully",
+      data: { user: userResponse },
     });
   } catch (error) {
-    console.error("Register error:", error);
+    console.error("Admin create user error:", error);
+
+    // Check for validation errors
+    if (error.name === "ValidationError") {
+      const errors = Object.values(error.errors).map((err) => err.message);
+      return res.status(400).json({
+        success: false,
+        message: "Validation error: " + errors.join(", "),
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
     });
   }
 };
+
+// ============================================================
+// SEND TRIAL WELCOME EMAIL
+// ============================================================
+const sendTrialWelcomeEmail = async (user, tempPassword, trialDays, trialEndDate, plan) => {
+  try {
+    const planNames = {
+      individual: "Individual",
+      team: "Team",
+      starter: "Starter",
+      pro: "Pro",
+      business: "Business",
+      enterprise: "Enterprise",
+    };
+
+    const planName = planNames[plan] || "Individual";
+
+    const emailHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to TaskFlow - Your ${trialDays}-Day Free Trial</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 0; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; background: #ffffff; }
+          .header { text-align: center; padding: 30px 0; background: linear-gradient(135deg, #0f2444, #1a365d); border-radius: 12px 12px 0 0; }
+          .header h1 { color: #ffffff; font-size: 28px; margin: 0; font-weight: 700; }
+          .header p { color: #94a3b8; margin: 10px 0 0; }
+          .content { padding: 30px; background: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; }
+          .trial-box { background: linear-gradient(135deg, #ecfdf5, #d1fae5); border: 1px solid #6ee7b7; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; }
+          .trial-box h2 { color: #065f46; margin: 0; font-size: 24px; }
+          .trial-box p { color: #047857; margin: 5px 0; }
+          .btn { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 20px; }
+          .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 14px; }
+          .credentials { background: #f1f5f9; padding: 15px; border-radius: 8px; margin: 10px 0; }
+          .credentials code { background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🚀 Welcome to TaskFlow!</h1>
+            <p>Your ${trialDays}-Day Free Trial Starts Now</p>
+          </div>
+          <div class="content">
+            <h2>Hi ${user.fullName}!</h2>
+            <p>Thank you for signing up for TaskFlow. We're excited to help you manage your tasks more efficiently.</p>
+            
+            <div class="trial-box">
+              <h2>🎉 ${trialDays}-Day Free Trial</h2>
+              <p><strong>${planName}</strong> Plan - ${trialDays} days free</p>
+              <p>Your trial ends on: <strong>${new Date(trialEndDate).toLocaleDateString()}</strong></p>
+            </div>
+
+            <h3>Your Account Details:</h3>
+            <div class="credentials">
+              <p><strong>Email:</strong> ${user.email}</p>
+              <p><strong>Password:</strong> <code>${tempPassword}</code></p>
+              <p style="font-size: 12px; color: #94a3b8;">We recommend changing your password after first login.</p>
+            </div>
+
+            <div style="text-align: center;">
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/login" class="btn">Login to Get Started</a>
+            </div>
+
+            <h3>What's included in your trial:</h3>
+            <ul style="color: #475569; line-height: 1.8;">
+              <li>✓ Full access to all ${planName} features</li>
+              <li>✓ Unlimited tasks and projects</li>
+              <li>✓ Team collaboration tools</li>
+              <li>✓ Priority email support</li>
+              <li>✓ No credit card required</li>
+            </ul>
+
+            <p style="color: #475569;">Your trial will automatically end after ${trialDays} days. You'll receive a reminder before it expires.</p>
+
+            <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-top: 20px; border-left: 4px solid #f59e0b;">
+              <p style="color: #92400e; margin: 0; font-size: 14px;">
+                <strong>💡 Tip:</strong> Complete your profile and invite team members to get the most out of your trial.
+              </p>
+            </div>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} TaskFlow. All rights reserved.</p>
+            <p style="font-size: 12px;">
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/privacy" style="color: #10b981;">Privacy Policy</a> | 
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/terms" style="color: #10b981;">Terms of Service</a>
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    await sendEmail({
+      to: user.email,
+      subject: `🎉 Welcome to TaskFlow! Your ${trialDays}-Day Free Trial`,
+      html: emailHTML,
+    });
+
+    console.log(`✅ Trial welcome email sent to ${user.email}`);
+  } catch (error) {
+    console.error("Error sending trial email:", error);
+  }
+};
+
+// ============================================================
+// SEND ADMIN CREATED WELCOME EMAIL (No trial)
+// ============================================================
+const sendAdminCreatedWelcomeEmail = async (user, tempPassword) => {
+  try {
+    const emailHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to TaskFlow</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 0; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; background: #ffffff; }
+          .header { text-align: center; padding: 30px 0; background: linear-gradient(135deg, #0f2444, #1a365d); border-radius: 12px 12px 0 0; }
+          .header h1 { color: #ffffff; font-size: 28px; margin: 0; font-weight: 700; }
+          .content { padding: 30px; background: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; }
+          .btn { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 20px; }
+          .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 14px; }
+          .credentials { background: #f1f5f9; padding: 15px; border-radius: 8px; margin: 10px 0; }
+          .credentials code { background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🚀 Welcome to TaskFlow!</h1>
+            <p>Your account has been created</p>
+          </div>
+          <div class="content">
+            <h2>Hi ${user.fullName}!</h2>
+            <p>An administrator has created your TaskFlow account. You're ready to start managing your tasks!</p>
+
+            <h3>Your Account Details:</h3>
+            <div class="credentials">
+              <p><strong>Email:</strong> ${user.email}</p>
+              <p><strong>Password:</strong> <code>${tempPassword}</code></p>
+              <p style="font-size: 12px; color: #94a3b8;">We recommend changing your password after first login.</p>
+            </div>
+
+            <div style="text-align: center;">
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/login" class="btn">Login to Get Started</a>
+            </div>
+
+            <p style="color: #475569; margin-top: 20px;">If you have any questions, please contact your administrator.</p>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} TaskFlow. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    await sendEmail({
+      to: user.email,
+      subject: "🚀 Welcome to TaskFlow - Your Account is Ready",
+      html: emailHTML,
+    });
+
+    console.log(`✅ Admin created welcome email sent to ${user.email}`);
+  } catch (error) {
+    console.error("Error sending admin welcome email:", error);
+  }
+};
+
 
 // ============================================================
 // GET ALL USERS
@@ -1504,12 +1909,16 @@ const bulkImportUsers = async (req, res) => {
 // ============================================================
 // CHANGE USER PASSWORD (Admin only)
 // ============================================================
+// controllers/auth.controller.js - FIXED changeUserPassword
+
 const changeUserPassword = async (req, res) => {
   try {
     const { id } = req.params;
     const { newPassword } = req.body;
 
-    // ✅ Validate input
+    console.log("🔑 Change password request for user ID:", id);
+    console.log("📝 New password length:", newPassword?.length);
+
     if (!newPassword) {
       return res.status(400).json({
         success: false,
@@ -1524,7 +1933,7 @@ const changeUserPassword = async (req, res) => {
       });
     }
 
-    // ✅ Find the user
+    // ✅ Find user WITHOUT selecting password first
     const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({
@@ -1533,24 +1942,72 @@ const changeUserPassword = async (req, res) => {
       });
     }
 
-    // ✅ Prevent admin from changing their own password through this route
-    if (id === req.user._id.toString()) {
-      return res.status(400).json({
+    console.log("👤 User found:", user.email);
+
+    // ✅ Directly hash the password using bcrypt
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    console.log("🔑 Hashed password created:", hashedPassword.substring(0, 30) + "...");
+
+    // ✅ Update using findByIdAndUpdate to bypass pre-save issues
+    const updatedUser = await User.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          password: hashedPassword,
+          isPasswordChanged: true,
+        }
+      },
+      { new: true, select: '+password' }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
         success: false,
-        message: "Use the change-password endpoint to change your own password",
+        message: "Failed to update user password",
       });
     }
 
-    // ✅ Hash the new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
+    // ✅ Verify the password was saved correctly
+    const verifyUser = await User.findById(id).select("+password");
+    const testCompare = await bcrypt.compare(newPassword, verifyUser.password);
+    console.log("🧪 Password verification result:", testCompare);
 
-    // ✅ Optionally mark that password was changed
-    user.isPasswordChanged = true;
+    if (!testCompare) {
+      console.error("❌ Password verification failed!");
+      return res.status(500).json({
+        success: false,
+        message: "Password update failed. Please try again.",
+      });
+    }
 
-    await user.save();
+    console.log(`✅ Password changed successfully for ${user.fullName}`);
 
-    // ✅ Send success response
+    // ✅ Create audit log
+    await createAuditLog({
+      action: "update",
+      resource: "user",
+      resourceId: user._id,
+      userId: req.user._id,
+      user: {
+        id: user._id,
+        name: user.fullName || user.email,
+        email: user.email,
+        role: user.role,
+      },
+      ip: req.ip || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      details: {
+        method: "POST",
+        path: `/users/${id}/change-password`,
+        status: "success",
+        updatedUser: user.email,
+      },
+      status: "success",
+      severity: "low",
+    });
+
     res.json({
       success: true,
       message: `Password changed successfully for ${user.fullName}`,
@@ -1568,6 +2025,9 @@ const changeUserPassword = async (req, res) => {
 // ============================================================
 module.exports = {
   register,
+  adminCreateUser,
+  sendTrialWelcomeEmail,
+  sendAdminCreatedWelcomeEmail,
   login,
   refreshToken,
   logout,

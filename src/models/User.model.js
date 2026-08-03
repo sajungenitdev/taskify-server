@@ -1,10 +1,12 @@
-// models/User.model.js - Add the missing fields
-
+// models/User.model.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
+    // ============================================================
+    // BASIC INFORMATION
+    // ============================================================
     fullName: {
       type: String,
       required: [true, "Full name is required"],
@@ -26,6 +28,16 @@ const userSchema = new mongoose.Schema(
       required: [true, "Password is required"],
       minlength: [6, "Password must be at least 6 characters"],
       select: false,
+    },
+
+    // ============================================================
+    // EMPLOYEE INFORMATION
+    // ============================================================
+    employeeId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
     },
     role: {
       type: String,
@@ -53,21 +65,22 @@ const userSchema = new mongoose.Schema(
     position: {
       type: String,
       trim: true,
-    },
-    employeeId: {
-      type: String,
-      unique: true,
-      sparse: true,
+      default: "",
     },
     phone: {
       type: String,
       trim: true,
+      default: "",
     },
     phoneNumber: {
       type: String,
       trim: true,
+      default: "",
     },
-    // ✅ Profile photo fields
+
+    // ============================================================
+    // PROFILE INFORMATION
+    // ============================================================
     profilePhoto: {
       type: String,
       default: "",
@@ -76,54 +89,56 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    // ✅ Onboarding status
-    onboardingCompleted: {
-      type: Boolean,
-      default: false,
-    },
-    // ✅ Bio
     bio: {
       type: String,
       default: "",
     },
-    // ✅ Location
     location: {
       type: String,
       default: "",
     },
-    // ✅ Website
     website: {
+      type: String,
+      default: "",
+    },
+    companyName: {
+      type: String,
+      default: "",
+    },
+    jobTitle: {
       type: String,
       default: "",
     },
 
     // ============================================================
-    // ✅ NEW FIELDS - These are missing in your model!
+    // SKILLS & LANGUAGES
     // ============================================================
-
-    // ✅ Skills - Array of strings
     skills: {
       type: [String],
       default: [],
     },
-
-    // ✅ Languages - Array of strings
     languages: {
       type: [String],
       default: [],
     },
 
-    // ✅ Achievements - Array of objects
+    // ============================================================
+    // ACHIEVEMENTS
+    // ============================================================
     achievements: {
-      type: [{
-        title: { type: String, required: true },
-        date: { type: String, default: "" },
-        description: { type: String, required: true },
-      }],
+      type: [
+        {
+          title: { type: String, required: true },
+          date: { type: String, default: "" },
+          description: { type: String, required: true },
+        },
+      ],
       default: [],
     },
 
-    // ✅ Social Links - Object with specific fields
+    // ============================================================
+    // SOCIAL LINKS
+    // ============================================================
     socialLinks: {
       linkedin: { type: String, default: "" },
       github: { type: String, default: "" },
@@ -133,10 +148,8 @@ const userSchema = new mongoose.Schema(
     },
 
     // ============================================================
-    // END NEW FIELDS
+    // PROFILE DETAILS (Nested)
     // ============================================================
-
-    // Profile fields
     profile: {
       bio: { type: String, default: "" },
       address: { type: String, default: "" },
@@ -159,7 +172,9 @@ const userSchema = new mongoose.Schema(
       },
     },
 
-    // Employment details
+    // ============================================================
+    // EMPLOYMENT DETAILS
+    // ============================================================
     employment: {
       joiningDate: { type: Date },
       employmentType: {
@@ -182,7 +197,9 @@ const userSchema = new mongoose.Schema(
       },
     },
 
-    // Account status
+    // ============================================================
+    // ACCOUNT STATUS
+    // ============================================================
     isActive: {
       type: Boolean,
       default: true,
@@ -196,6 +213,14 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
     isPasswordChanged: {
+      type: Boolean,
+      default: false,
+    },
+    firstLogin: {
+      type: Boolean,
+      default: true,
+    },
+    onboardingCompleted: {
       type: Boolean,
       default: false,
     },
@@ -214,7 +239,9 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
-    // Reset password
+    // ============================================================
+    // PASSWORD RESET
+    // ============================================================
     resetPasswordToken: {
       type: String,
       select: false,
@@ -224,7 +251,107 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
-    // Notifications
+    // ============================================================
+    // TRIAL & SUBSCRIPTION - ✅ ADDED
+    // ============================================================
+    trial: {
+      isActive: {
+        type: Boolean,
+        default: false,
+      },
+      startDate: {
+        type: Date,
+        default: null,
+      },
+      endDate: {
+        type: Date,
+        default: null,
+      },
+      daysLeft: {
+        type: Number,
+        default: 0,
+      },
+      plan: {
+        type: String,
+        default: "individual",
+        enum: ["individual", "team", "starter", "pro", "business", "enterprise", "free"],
+      },
+      billingCycle: {
+        type: String,
+        default: "monthly",
+        enum: ["monthly", "yearly", "quarterly"],
+      },
+      price: {
+        type: Number,
+        default: 0,
+      },
+      currency: {
+        type: String,
+        default: "USD",
+      },
+      period: {
+        type: String,
+        default: "month",
+      },
+    },
+
+    subscription: {
+      status: {
+        type: String,
+        enum: ["none", "trial", "active", "expired", "cancelled", "pending"],
+        default: "none",
+      },
+      plan: {
+        type: String,
+        default: "free",
+        enum: ["free", "individual", "team", "starter", "pro", "business", "enterprise"],
+      },
+      billingCycle: {
+        type: String,
+        default: "monthly",
+        enum: ["monthly", "yearly", "quarterly"],
+      },
+      price: {
+        type: Number,
+        default: 0,
+      },
+      currency: {
+        type: String,
+        default: "USD",
+      },
+      startDate: {
+        type: Date,
+        default: null,
+      },
+      trialEndDate: {
+        type: Date,
+        default: null,
+      },
+      nextBillingDate: {
+        type: Date,
+        default: null,
+      },
+      cancelledAt: {
+        type: Date,
+        default: null,
+      },
+      paymentMethod: {
+        type: String,
+        default: "",
+      },
+      paymentProvider: {
+        type: String,
+        default: "",
+      },
+      paymentId: {
+        type: String,
+        default: "",
+      },
+    },
+
+    // ============================================================
+    // NOTIFICATIONS
+    // ============================================================
     notificationPreferences: {
       email: { type: Boolean, default: true },
       push: { type: Boolean, default: true },
@@ -238,7 +365,9 @@ const userSchema = new mongoose.Schema(
       marketing: { type: Boolean, default: false },
     },
 
-    // Settings
+    // ============================================================
+    // SETTINGS
+    // ============================================================
     settings: {
       theme: {
         type: String,
@@ -257,22 +386,51 @@ const userSchema = new mongoose.Schema(
         type: String,
         default: "MM/DD/YYYY",
       },
+      sidebarCollapsed: {
+        type: Boolean,
+        default: false,
+      },
+      compactMode: {
+        type: Boolean,
+        default: false,
+      },
+    },
+
+    // ============================================================
+    // TIMESTAMPS
+    // ============================================================
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
     },
   },
   {
     timestamps: true,
-  },
+  }
 );
 
-// Indexes
+// ============================================================
+// INDEXES
+// ============================================================
 userSchema.index({ email: 1 });
+userSchema.index({ employeeId: 1 });
 userSchema.index({ roles: 1 });
 userSchema.index({ department: 1 });
 userSchema.index({ "employment.manager": 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ "trial.isActive": 1 });
+userSchema.index({ "subscription.status": 1 });
+userSchema.index({ "trial.endDate": 1 });
 
-// Hash password before saving
+// ============================================================
+// PRE-SAVE MIDDLEWARE
+// ============================================================
 userSchema.pre("save", async function (next) {
+  // ✅ Only hash if password is modified
   if (!this.isModified("password")) return next();
 
   try {
@@ -284,11 +442,16 @@ userSchema.pre("save", async function (next) {
   }
 });
 
-// Methods
+// ============================================================
+// INSTANCE METHODS
+// ============================================================
+
+// Compare password
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
+// Get role names
 userSchema.methods.getRoleNames = async function () {
   if (this.roles && this.roles.length > 0) {
     await this.populate("roles");
@@ -297,29 +460,251 @@ userSchema.methods.getRoleNames = async function () {
   return [this.role];
 };
 
+// Get primary role
 userSchema.methods.getPrimaryRole = async function () {
   if (this.roles && this.roles.length > 0) {
     await this.populate("roles");
     const primaryRole = this.roles.find(
-      (r) => r.code.toLowerCase() === this.role,
+      (r) => r.code.toLowerCase() === this.role
     );
     return primaryRole ? primaryRole.name : this.role;
   }
   return this.role;
 };
 
+// Check if user has a specific role
 userSchema.methods.hasRole = function (roleCode) {
   if (this.role === roleCode) return true;
   if (this.roles && this.roles.length > 0) {
-    if (typeof this.roles[0] === 'object' && this.roles[0].code) {
-      return this.roles.some(r => r.code.toLowerCase() === roleCode.toLowerCase());
+    if (typeof this.roles[0] === "object" && this.roles[0].code) {
+      return this.roles.some(
+        (r) => r.code.toLowerCase() === roleCode.toLowerCase()
+      );
     }
   }
   return false;
 };
 
+// Check if user has any of the given roles
 userSchema.methods.hasAnyRole = function (roleCodes) {
-  return roleCodes.some(code => this.hasRole(code));
+  return roleCodes.some((code) => this.hasRole(code));
 };
 
+// ============================================================
+// TRIAL & SUBSCRIPTION METHODS
+// ============================================================
+
+// Check if user is on trial
+userSchema.methods.isOnTrial = function () {
+  if (!this.trial || !this.trial.isActive) return false;
+  const now = new Date();
+  const endDate = new Date(this.trial.endDate);
+  return now < endDate;
+};
+
+// Get days left in trial
+userSchema.methods.getTrialDaysLeft = function () {
+  if (!this.isOnTrial()) return 0;
+  const now = new Date();
+  const endDate = new Date(this.trial.endDate);
+  const diffTime = endDate.getTime() - now.getTime();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+};
+
+// Check if subscription is active
+userSchema.methods.isSubscriptionActive = function () {
+  return this.subscription && this.subscription.status === "active";
+};
+
+// Check if subscription is on trial
+userSchema.methods.isSubscriptionOnTrial = function () {
+  return this.subscription && this.subscription.status === "trial";
+};
+
+// Get subscription status
+userSchema.methods.getSubscriptionStatus = function () {
+  if (this.isOnTrial()) return "trial";
+  if (this.isSubscriptionActive()) return "active";
+  if (this.subscription?.status === "expired") return "expired";
+  if (this.subscription?.status === "cancelled") return "cancelled";
+  return "none";
+};
+
+// Start trial for user
+userSchema.methods.startTrial = function (plan = "individual", days = 7) {
+  const startDate = new Date();
+  const endDate = new Date();
+  endDate.setDate(endDate.getDate() + days);
+
+  this.trial = {
+    isActive: true,
+    startDate: startDate,
+    endDate: endDate,
+    daysLeft: days,
+    plan: plan,
+    billingCycle: "monthly",
+    price: this.getPlanPrice(plan),
+    currency: "USD",
+    period: "month",
+  };
+
+  this.subscription = {
+    status: "trial",
+    plan: plan,
+    billingCycle: "monthly",
+    price: this.getPlanPrice(plan),
+    currency: "USD",
+    startDate: startDate,
+    trialEndDate: endDate,
+    nextBillingDate: null,
+    cancelledAt: null,
+    paymentMethod: "",
+    paymentProvider: "",
+    paymentId: "",
+  };
+
+  return this;
+};
+
+// Get plan price helper
+userSchema.methods.getPlanPrice = function (plan) {
+  const prices = {
+    individual: 10,
+    team: 29,
+    starter: 10,
+    pro: 29,
+    business: 49,
+    enterprise: 99,
+    free: 0,
+  };
+  return prices[plan] || 0;
+};
+
+// End trial
+userSchema.methods.endTrial = function () {
+  if (this.trial) {
+    this.trial.isActive = false;
+    this.trial.daysLeft = 0;
+  }
+  if (this.subscription && this.subscription.status === "trial") {
+    this.subscription.status = "expired";
+  }
+  return this;
+};
+
+// Activate subscription
+userSchema.methods.activateSubscription = function (plan = "enterprise") {
+  const price = this.getPlanPrice(plan);
+  this.subscription = {
+    status: "active",
+    plan: plan,
+    billingCycle: "monthly",
+    price: price,
+    currency: "USD",
+    startDate: new Date(),
+    trialEndDate: null,
+    nextBillingDate: null,
+    cancelledAt: null,
+    paymentMethod: "",
+    paymentProvider: "",
+    paymentId: "",
+  };
+  return this;
+};
+
+// Cancel subscription
+userSchema.methods.cancelSubscription = function () {
+  if (this.subscription) {
+    this.subscription.status = "cancelled";
+    this.subscription.cancelledAt = new Date();
+  }
+  return this;
+};
+
+// ============================================================
+// STATIC METHODS
+// ============================================================
+
+// Find users with expiring trials
+userSchema.statics.findExpiringTrials = function (days = 1) {
+  const now = new Date();
+  const future = new Date();
+  future.setDate(future.getDate() + days);
+
+  return this.find({
+    "trial.isActive": true,
+    "trial.endDate": { $gte: now, $lte: future },
+  });
+};
+
+// Find users whose trials have expired
+userSchema.statics.findExpiredTrials = function () {
+  const now = new Date();
+  return this.find({
+    "trial.isActive": true,
+    "trial.endDate": { $lt: now },
+  });
+};
+
+// Find users by subscription status
+userSchema.statics.findBySubscriptionStatus = function (status) {
+  return this.find({ "subscription.status": status });
+};
+
+// Get users with active trials
+userSchema.statics.getActiveTrials = function () {
+  const now = new Date();
+  return this.find({
+    "trial.isActive": true,
+    "trial.endDate": { $gt: now },
+  });
+};
+
+// ============================================================
+// VIRTUAL PROPERTIES
+// ============================================================
+
+// Full name with employee ID
+userSchema.virtual("displayName").get(function () {
+  return `${this.fullName} (${this.employeeId || "No ID"})`;
+});
+
+// Trial status text
+userSchema.virtual("trialStatus").get(function () {
+  if (this.isOnTrial()) {
+    const daysLeft = this.getTrialDaysLeft();
+    return `Trial - ${daysLeft} days remaining`;
+  }
+  if (this.subscription?.status === "active") return "Active Subscription";
+  if (this.subscription?.status === "expired") return "Expired";
+  if (this.subscription?.status === "cancelled") return "Cancelled";
+  return "No Subscription";
+});
+
+// ============================================================
+// JSON TRANSFORM
+// ============================================================
+userSchema.set("toJSON", {
+  transform: function (doc, ret) {
+    delete ret.password;
+    delete ret.refreshToken;
+    delete ret.resetPasswordToken;
+    delete ret.resetPasswordExpires;
+    return ret;
+  },
+});
+
+userSchema.set("toObject", {
+  transform: function (doc, ret) {
+    delete ret.password;
+    delete ret.refreshToken;
+    delete ret.resetPasswordToken;
+    delete ret.resetPasswordExpires;
+    return ret;
+  },
+});
+
+// ============================================================
+// EXPORT
+// ============================================================
 module.exports = { User: mongoose.model("User", userSchema) };

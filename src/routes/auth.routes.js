@@ -23,6 +23,7 @@ const {
   completeOnboarding,
   refreshToken,
   logout,
+  adminCreateUser,
 } = require("../controllers/auth.controller");
 
 const router = express.Router();
@@ -33,11 +34,26 @@ const router = express.Router();
 
 /**
  * @route   POST /api/auth/register
- * @desc    Register a new user (Admin only)
- * @access  Public (should be protected in production)
+ * @desc    Self-register a new user (with 7-day trial)
+ * @access  Public
  */
 router.post("/register", register);
 
+// ============================================================
+// ADMIN ROUTES - Create user without trial
+// ============================================================
+
+/**
+ * @route   POST /api/auth/admin/create-user
+ * @desc    Admin creates a new user (NO trial)
+ * @access  Private (Admin only)
+ */
+router.post(
+  "/admin/create-user",
+  authenticate,
+  requireRole("admin", "super_admin", "hr_manager"),
+  adminCreateUser
+);
 /**
  * @route   POST /api/auth/login
  * @desc    Login user
@@ -227,11 +243,11 @@ router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
  * @access  Private (Admin, Super Admin, HR Manager only)
  * @body    { newPassword: "string" }
  */
-router.post(
-  "/users/:id/change-password",
-  requireRole("admin", "super_admin", "hr_manager"),
-  changeUserPassword
-);
+// router.post(
+//   "/users/:id/change-password",
+//   requireRole("admin", "super_admin", "hr_manager"),
+//   changeUserPassword
+// );
 
 // ============================================================
 // EXPORT AND IMPORT ROUTES (Admin only)

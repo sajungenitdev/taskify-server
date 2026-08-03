@@ -10,7 +10,9 @@ const auditLogSchema = new mongoose.Schema({
             "export", "import", "share", "copy", "move", "archive",
             "restore", "approve", "reject", "lock", "unlock",
             "assign", "unassign", "invite", "remove", "enable",
-            "disable", "reset", "change"
+            "disable", "reset", "change",
+            "admin_create_user",
+            "register",
         ],
     },
     resource: {
@@ -34,10 +36,22 @@ const auditLogSchema = new mongoose.Schema({
         required: true,
     },
     user: {
-        id: { type: String, required: true },
-        name: { type: String, required: true },
-        email: { type: String, required: true },
-        role: { type: String, required: true },
+        id: {
+            type: String,
+            default: null
+        },
+        name: {
+            type: String,
+            default: "System" // ✅ Add default value
+        },
+        email: {
+            type: String,
+            default: "system@example.com" // ✅ Add default value
+        },
+        role: {
+            type: String,
+            default: "system" // ✅ Add default value
+        },
     },
     ip: {
         type: String,

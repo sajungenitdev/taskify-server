@@ -173,8 +173,8 @@ const exportAuditLogs = async (req, res) => {
 
     // Convert to CSV
     const headers = [
-      "Timestamp", "User", "Email", "Action", "Resource", 
-      "Resource ID", "Status", "Severity", "IP", "Location", 
+      "Timestamp", "User", "Email", "Action", "Resource",
+      "Resource ID", "Status", "Severity", "IP", "Location",
       "Device", "Browser", "OS", "Details"
     ];
 
@@ -218,12 +218,32 @@ const exportAuditLogs = async (req, res) => {
 // ============================================================
 // CREATE AUDIT LOG (Middleware Helper)
 // ============================================================
+// controllers/auditLog.controller.js - Fix the createAuditLog function
+
 const createAuditLog = async (data) => {
   try {
-    const log = await AuditLog.createLog(data);
+    // ✅ Ensure user.name is always set
+    const logData = {
+      ...data,
+      user: {
+        id: data.user?.id || data.userId || null,
+        name: data.user?.name || data.user?.fullName || data.user?.email || "System",
+        email: data.user?.email || "unknown@system.com",
+        role: data.user?.role || "system",
+      },
+      // Ensure required fields have defaults
+      action: data.action || "unknown",
+      resource: data.resource || "system",
+      ip: data.ip || req?.ip || "0.0.0.0",
+      userAgent: data.userAgent || "Unknown",
+    };
+
+    const log = new AuditLog(logData);
+    await log.save();
     return log;
   } catch (error) {
     console.error("Create audit log error:", error);
+    // Don't throw - just log the error
     return null;
   }
 };
