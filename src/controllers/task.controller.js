@@ -567,7 +567,6 @@ const createTask = async (req, res) => {
 // ============================================================
 // UPDATE TASK - With permission check
 // ============================================================
-// controllers/task.controller.js - FIXED updateTask (JavaScript syntax)
 
 const updateTask = async (req, res) => {
   try {
@@ -2207,7 +2206,241 @@ const getTaskStatistics = async (req, res) => {
     });
   }
 };
+// ============================================================
+// START TASK TIMER
+// ============================================================
+const startTaskTimer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
 
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found"
+      });
+    }
+
+    // Check if user is assigned to this task
+    if (task.assignedTo.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not assigned to this task"
+      });
+    }
+
+    // Check if task is already running
+    if (task.isTimerRunning) {
+      return res.status(400).json({
+        success: false,
+        message: "Timer is already running for this task"
+      });
+    }
+
+    // Check if task is completed
+    if (task.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot start timer on completed task"
+      });
+    }
+
+    // Start timer
+    task.isTimerRunning = true;
+    task.timerStartTime = new Date();
+    task.elapsedTime = 0;
+    task.status = "in_progress";
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Timer started successfully",
+      data: task
+    });
+  } catch (error) {
+    console.error("Start timer error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to start timer",
+      error: error.message
+    });
+  }
+};
+
+// ============================================================
+// PAUSE TASK TIMER
+// ============================================================
+const pauseTaskTimer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { elapsedTime } = req.body;
+    const userId = req.user._id;
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found"
+      });
+    }
+
+    // Check if user is assigned to this task
+    if (task.assignedTo.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not assigned to this task"
+      });
+    }
+
+    // Check if timer is running
+    if (!task.isTimerRunning) {
+      return res.status(400).json({
+        success: false,
+        message: "Timer is not running for this task"
+      });
+    }
+
+    // Calculate elapsed time
+    const startTime = new Date(task.timerStartTime);
+    const now = new Date();
+    const additionalSeconds = Math.floor((now.getTime() - startTime.getTime()) / 1000);
+    const totalElapsed = (task.elapsedTime || 0) + additionalSeconds;
+
+    // Pause timer
+    task.isTimerRunning = false;
+    task.timerStartTime = null;
+    task.elapsedTime = totalElapsed;
+    task.timeSpent = Math.round((totalElapsed / 3600) * 10) / 10; // Convert to hours
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Timer paused successfully",
+      data: {
+        ...task.toObject(),
+        elapsedSeconds: totalElapsed
+      }
+    });
+  } catch (error) {
+    console.error("Pause timer error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to pause timer",
+      error: error.message
+    });
+  }
+};
+
+// ============================================================
+// RESUME TASK TIMER
+// ============================================================
+const resumeTaskTimer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found"
+      });
+    }
+
+    // Check if user is assigned to this task
+    if (task.assignedTo.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not assigned to this task"
+      });
+    }
+
+    // Check if timer is already running
+    if (task.isTimerRunning) {
+      return res.status(400).json({
+        success: false,
+        message: "Timer is already running for this task"
+      });
+    }
+
+    // Resume timer
+    task.isTimerRunning = true;
+    task.timerStartTime = new Date();
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Timer resumed successfully",
+      data: task
+    });
+  } catch (error) {
+    console.error("Resume timer error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to resume timer",
+      error: error.message
+    });
+  }
+};
+
+// ============================================================
+// COMPLETE TASK (with timer stop)
+// ============================================================
+const completeTask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found"
+      });
+    }
+
+    // Check if user is assigned to this task
+    if (task.assignedTo.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not assigned to this task"
+      });
+    }
+
+    // If timer is running, stop it first
+    if (task.isTimerRunning) {
+      const startTime = new Date(task.timerStartTime);
+      const now = new Date();
+      const additionalSeconds = Math.floor((now.getTime() - startTime.getTime()) / 1000);
+      const totalElapsed = (task.elapsedTime || 0) + additionalSeconds;
+
+      task.isTimerRunning = false;
+      task.timerStartTime = null;
+      task.elapsedTime = totalElapsed;
+      task.timeSpent = Math.round((totalElapsed / 3600) * 10) / 10;
+    }
+
+    // Mark task as completed
+    task.status = "completed";
+    task.completedAt = new Date();
+    task.progress = 100;
+    await task.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Task completed successfully! 🎉",
+      data: task
+    });
+  } catch (error) {
+    console.error("Complete task error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to complete task",
+      error: error.message
+    });
+  }
+};
 
 // ============================================================
 // EXPORT ALL CONTROLLERS
@@ -2231,7 +2464,10 @@ module.exports = {
   getProjectTasksSummary,
   getTaskStatistics,
   getExtensionRequests,
-  // Add the new helper functions if needed
   notifyAssigneeOfRejection,
   notifyAssigneeOfApproval,
+  startTaskTimer,
+  pauseTaskTimer,
+  resumeTaskTimer,
+  completeTask,
 };

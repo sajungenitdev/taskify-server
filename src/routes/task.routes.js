@@ -20,6 +20,10 @@ const {
   submitEvidence,
   bulkCreateTasksWithoutProject,
   getExtensionRequests,
+  resumeTaskTimer,
+  completeTask,
+  pauseTaskTimer,
+  startTaskTimer,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -176,6 +180,38 @@ router.post(
     body("reason").notEmpty().withMessage("Reason is required"),
   ],
   requestExtension,
+);
+
+// ============= TIMER ROUTES =============
+// Start timer for a task
+router.post(
+  "/:id/timer/start",
+  authenticate,
+  startTaskTimer
+);
+
+// Pause timer for a task
+router.post(
+  "/:id/timer/pause",
+  authenticate,
+  [
+    body("elapsedTime").isNumeric().withMessage("elapsedTime must be a number"),
+  ],
+  pauseTaskTimer
+);
+
+// Resume timer for a task
+router.post(
+  "/:id/timer/resume",
+  authenticate,
+  resumeTaskTimer
+);
+
+// Complete task (also stops timer)
+router.patch(
+  "/:id/complete",
+  authenticate,
+  completeTask
 );
 
 // ============================================================

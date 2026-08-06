@@ -55,6 +55,11 @@ const taskSchema = new mongoose.Schema(
     evidenceSubmittedAt: { type: Date },
     rejectionReason: { type: String, default: "" },
     approvalNote: { type: String, default: "" },
+    isTimerRunning: { type: Boolean, default: false },
+    timerStartTime: { type: Date },
+    elapsedTime: { type: Number, default: 0 }, // in seconds
+    timeSpent: { type: Number, default: 0 }, // in hours
+    completedAt: { type: Date },
 
     order: { type: Number, default: 0 },
 
