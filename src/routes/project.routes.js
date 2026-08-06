@@ -16,6 +16,7 @@ const {
   getTeamPerformance,
   archiveProject,
   unarchiveProject,
+  getProjectContributors,
 } = require("../controllers/project.controller");
 
 const router = express.Router();
@@ -48,5 +49,7 @@ router.get("/:id/team-performance", getTeamPerformance);
 
 // Delete (soft delete)
 router.delete("/:id", deleteProject);
+router.get("/:id/contributors", getProjectContributors);
+
 
 module.exports = router;

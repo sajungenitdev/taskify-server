@@ -747,6 +747,156 @@ const getTeamPerformance = async (req, res) => {
     });
   }
 };
+// Add this to controllers/project.controller.js
+
+// ============================================================
+// GET PROJECT CONTRIBUTORS FROM TASKS
+// ============================================================
+const getProjectContributors = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const project = await Project.findById(id);
+    if (!project) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Project not found" });
+    }
+
+    // Get tasks for this project
+    let tasks = [];
+    try {
+      const { Task } = require("../models/Task.model");
+      tasks = await Task.find({ projectId: id })
+        .populate("assignedTo", "fullName email avatar")
+        .populate("createdBy", "fullName email")
+        .lean();
+    } catch (error) {
+      console.warn("Task model not found or error:", error);
+      return res.json({ success: true, data: [] });
+    }
+
+    if (!tasks || tasks.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    // Group tasks by assignee
+    const contributorMap = new Map();
+
+    tasks.forEach(task => {
+      const user = task.assignedTo || task.createdBy;
+      if (!user) return;
+
+      const userId = user._id.toString();
+
+      if (!contributorMap.has(userId)) {
+        contributorMap.set(userId, {
+          userId: userId,
+          fullName: user.fullName || "Unknown",
+          email: user.email || "",
+          avatar: user.avatar || null,
+          role: "Contributor",
+          tasksCompleted: 0,
+          totalTasks: 0,
+          tasksAssigned: 0,
+          completionRate: 0,
+          hoursLogged: 0,
+          estimatedHours: 0,
+          hoursAccuracy: 0,
+          onTimeTasks: 0,
+          lateTasks: 0,
+          onTimeRate: 0,
+          avgTaskCompletionTime: 0,
+          taskBreakdown: {
+            pending: 0,
+            inProgress: 0,
+            submitted: 0,
+            completed: 0,
+            overdue: 0,
+            rejected: 0
+          },
+          priorityBreakdown: {
+            low: 0,
+            normal: 0,
+            high: 0,
+            critical: 0
+          }
+        });
+      }
+
+      const contributor = contributorMap.get(userId);
+      contributor.totalTasks++;
+      contributor.tasksAssigned++;
+
+      // Track status
+      const status = task.status || "pending";
+      if (status === "completed") {
+        contributor.tasksCompleted++;
+        contributor.taskBreakdown.completed++;
+
+        if (task.dueDate && task.completedAt) {
+          const isOnTime = new Date(task.completedAt) <= new Date(task.dueDate);
+          if (isOnTime) {
+            contributor.onTimeTasks++;
+          } else {
+            contributor.lateTasks++;
+          }
+        }
+      } else if (status === "in_progress" || status === "in-progress") {
+        contributor.taskBreakdown.inProgress++;
+      } else if (status === "submitted" || status === "review") {
+        contributor.taskBreakdown.submitted++;
+      } else if (status === "pending" || status === "todo") {
+        contributor.taskBreakdown.pending++;
+      } else if (status === "overdue") {
+        contributor.taskBreakdown.overdue++;
+      } else if (status === "rejected") {
+        contributor.taskBreakdown.rejected++;
+      }
+
+      // Track priority
+      const priority = task.priority || "normal";
+      if (priority === "low") contributor.priorityBreakdown.low++;
+      else if (priority === "normal" || priority === "medium") contributor.priorityBreakdown.normal++;
+      else if (priority === "high") contributor.priorityBreakdown.high++;
+      else if (priority === "critical" || priority === "urgent") contributor.priorityBreakdown.critical++;
+
+      // Track hours
+      if (task.estimatedHours) {
+        contributor.estimatedHours += task.estimatedHours;
+      }
+      if (task.actualHours) {
+        contributor.hoursLogged += task.actualHours;
+      }
+    });
+
+    // Calculate derived metrics
+    const result = Array.from(contributorMap.values()).map(contrib => ({
+      ...contrib,
+      completionRate: contrib.totalTasks > 0
+        ? Math.round((contrib.tasksCompleted / contrib.totalTasks) * 100)
+        : 0,
+      onTimeRate: contrib.tasksCompleted > 0
+        ? Math.round((contrib.onTimeTasks / contrib.tasksCompleted) * 100)
+        : 0,
+      hoursAccuracy: contrib.estimatedHours > 0
+        ? Math.round((contrib.hoursLogged / contrib.estimatedHours) * 100)
+        : 0,
+      avgTaskCompletionTime: 0,
+    }));
+
+    // Sort by tasks completed descending
+    result.sort((a, b) => b.tasksCompleted - a.tasksCompleted);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error("Get contributors error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
 
 // ============================================================
 // EXPORT ALL FUNCTIONS
@@ -766,4 +916,5 @@ module.exports = {
   getTeamPerformance,
   archiveProject,
   unarchiveProject,
+  getProjectContributors
 };

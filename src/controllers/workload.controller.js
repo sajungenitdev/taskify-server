@@ -8,15 +8,48 @@ const getWorkloadCapacity = async (req, res) => {
   try {
     // Get all active users with their department populated
     const users = await User.find({ isActive: true })
-      .populate('department', 'name code') // Using 'department' (not 'departmentId')
+      .populate('department', 'name code')
       .populate('roles', 'name code level')
       .select('-password');
 
-    // Get active tasks grouped by assignedTo
-    const taskCounts = await Task.aggregate([
+    // Get ALL tasks grouped by assignedTo (including completed)
+    const allTaskCounts = await Task.aggregate([
       {
         $match: {
-          status: { $in: ['pending', 'in_progress', 'assigned', 'todo', 'in_progress'] },
+          assignedTo: { $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: '$assignedTo',
+          totalTasks: { $sum: 1 },
+          completedTasks: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', ['completed', 'done', 'closed']] },
+                1,
+                0
+              ]
+            }
+          },
+          activeTasks: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', ['pending', 'in_progress', 'assigned', 'todo']] },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    // Get active tasks for workload calculation
+    const activeTaskCounts = await Task.aggregate([
+      {
+        $match: {
+          status: { $in: ['pending', 'in_progress', 'assigned', 'todo'] },
           assignedTo: { $ne: null }
         }
       },
@@ -28,16 +61,27 @@ const getWorkloadCapacity = async (req, res) => {
       }
     ]);
 
-    // Create task count map
+    // Create maps
     const taskCountMap = {};
-    taskCounts.forEach(item => {
+    const completedTaskMap = {};
+    const allTaskMap = {};
+
+    allTaskCounts.forEach(item => {
+      allTaskMap[item._id?.toString()] = item.totalTasks || 0;
+      completedTaskMap[item._id?.toString()] = item.completedTasks || 0;
+    });
+
+    activeTaskCounts.forEach(item => {
       taskCountMap[item._id?.toString()] = item.taskCount;
     });
 
     // Calculate workload for each user
     const workloadData = users.map(user => {
-      const taskCount = taskCountMap[user._id?.toString()] || 0;
-      
+      const userId = user._id?.toString();
+      const activeTaskCount = taskCountMap[userId] || 0;
+      const totalTaskCount = allTaskMap[userId] || 0;
+      const completedTaskCount = completedTaskMap[userId] || 0;
+
       // Get role level based on primary role
       const roleLevelMap = {
         super_admin: 100,
@@ -48,48 +92,80 @@ const getWorkloadCapacity = async (req, res) => {
         line_manager: 60,
         employee: 50,
       };
-      
-      // Check if user has roles array with populated data
-      let roleLevel = 50; // default
+
+      let roleLevel = 50;
       if (user.roles && user.roles.length > 0) {
-        // Find highest role level from roles array
         const maxLevel = Math.max(...user.roles.map(r => roleLevelMap[r.code?.toLowerCase()] || 0));
         roleLevel = maxLevel || 50;
       } else if (user.role) {
         roleLevel = roleLevelMap[user.role] || 50;
       }
-      
-      // Calculate workload
+
+      // Calculate workload based on active tasks
       const estimatedHoursPerTask = 8;
-      const activeHours = taskCount * estimatedHoursPerTask;
-      const monthlyCapacity = roleLevel * 0.8; // 80% of role level as capacity
-      const capacityPercentage = monthlyCapacity > 0 
+      const activeHours = activeTaskCount * estimatedHoursPerTask;
+      const monthlyCapacity = roleLevel * 0.8;
+      const capacityPercentage = monthlyCapacity > 0
         ? Math.min(Math.round((activeHours / monthlyCapacity) * 100), 150)
         : 0;
 
       // Determine status color
-      const statusColor = capacityPercentage > 90 ? 'red' 
-        : capacityPercentage > 70 ? 'amber' 
-        : 'green';
+      const statusColor = capacityPercentage > 90 ? 'red'
+        : capacityPercentage > 70 ? 'amber'
+          : 'green';
 
-      // Return user with workload info
+      // Get task breakdown
+      const pendingTasks = totalTaskCount - activeTaskCount - completedTaskCount;
+
       return {
         user: {
           _id: user._id,
           fullName: user.fullName || 'No Name',
           email: user.email || 'No Email',
           role: user.role || 'employee',
-          department: user.department || null, // This will be populated
+          department: user.department || null,
+          employeeId: user.employeeId || user.employeeID || '',
         },
         workload: {
           capacityPercentage,
           statusColor,
           activeHours,
-          taskCount,
+          taskCount: totalTaskCount, // Now shows ALL tasks
+          completedTaskCount: completedTaskCount,
+          activeTaskCount: activeTaskCount,
           monthlyCapacity: Math.round(monthlyCapacity),
-        }
+        },
+        breakdown: {
+          taskBreakdown: {
+            pending: pendingTasks,
+            inProgress: activeTaskCount,
+            submitted: completedTaskCount,
+          },
+          priorityDistribution: {
+            low: 0,
+            normal: 0,
+            high: 0,
+            urgent: 0,
+          },
+          upcomingDeadlines: [],
+        },
+        projects: 0,
       };
     });
+
+    // Calculate aggregates
+    const totalMembers = workloadData.length;
+    const totalActiveHours = workloadData.reduce((sum, m) => sum + m.workload.activeHours, 0);
+    const totalTasks = workloadData.reduce((sum, m) => sum + m.workload.taskCount, 0);
+    const avgUtilization = totalMembers > 0
+      ? Math.round(workloadData.reduce((sum, m) => sum + m.workload.capacityPercentage, 0) / totalMembers)
+      : 0;
+
+    const utilizationDistribution = {
+      green: workloadData.filter(m => m.workload.capacityPercentage <= 70).length,
+      amber: workloadData.filter(m => m.workload.capacityPercentage > 70 && m.workload.capacityPercentage <= 90).length,
+      red: workloadData.filter(m => m.workload.capacityPercentage > 90).length,
+    };
 
     // Sort by capacity percentage (highest first)
     workloadData.sort((a, b) => b.workload.capacityPercentage - a.workload.capacityPercentage);
@@ -97,6 +173,13 @@ const getWorkloadCapacity = async (req, res) => {
     res.json({
       success: true,
       data: workloadData,
+      aggregates: {
+        totalMembers,
+        totalActiveHours,
+        totalTasks,
+        averageUtilization: avgUtilization,
+        utilizationDistribution,
+      },
       count: workloadData.length,
     });
   } catch (error) {
@@ -125,11 +208,15 @@ const getUserWorkload = async (req, res) => {
       });
     }
 
-    // Get task counts for this user
-    const taskCount = await Task.countDocuments({
-      assignedTo: userId,
-      status: { $in: ['pending', 'in_progress', 'assigned', 'todo', 'in_progress'] }
-    });
+    // Get ALL tasks for this user
+    const allTasks = await Task.find({ assignedTo: userId });
+    const totalTasks = allTasks.length;
+    const completedTasks = allTasks.filter(t =>
+      ['completed', 'done', 'closed'].includes(t.status)
+    ).length;
+    const activeTasks = allTasks.filter(t =>
+      ['pending', 'in_progress', 'assigned', 'todo'].includes(t.status)
+    ).length;
 
     // Calculate workload based on role
     const roleLevelMap = {
@@ -141,7 +228,7 @@ const getUserWorkload = async (req, res) => {
       line_manager: 60,
       employee: 50,
     };
-    
+
     let roleLevel = 50;
     if (user.roles && user.roles.length > 0) {
       const maxLevel = Math.max(...user.roles.map(r => roleLevelMap[r.code?.toLowerCase()] || 0));
@@ -151,15 +238,40 @@ const getUserWorkload = async (req, res) => {
     }
 
     const estimatedHoursPerTask = 8;
-    const activeHours = taskCount * estimatedHoursPerTask;
+    const activeHours = activeTasks * estimatedHoursPerTask;
     const monthlyCapacity = roleLevel * 0.8;
-    const capacityPercentage = monthlyCapacity > 0 
+    const capacityPercentage = monthlyCapacity > 0
       ? Math.min(Math.round((activeHours / monthlyCapacity) * 100), 150)
       : 0;
 
-    const statusColor = capacityPercentage > 90 ? 'red' 
-      : capacityPercentage > 70 ? 'amber' 
-      : 'green';
+    const statusColor = capacityPercentage > 90 ? 'red'
+      : capacityPercentage > 70 ? 'amber'
+        : 'green';
+
+    // Get task breakdown by priority
+    const priorityDistribution = {
+      low: allTasks.filter(t => t.priority === 'low' || t.priority === 'Low').length,
+      normal: allTasks.filter(t => t.priority === 'normal' || t.priority === 'Normal' || t.priority === 'medium' || t.priority === 'Medium').length,
+      high: allTasks.filter(t => t.priority === 'high' || t.priority === 'High').length,
+      urgent: allTasks.filter(t => t.priority === 'urgent' || t.priority === 'Urgent').length,
+    };
+
+    // Get upcoming deadlines (tasks due in next 7 days)
+    const sevenDaysFromNow = new Date();
+    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+
+    const upcomingDeadlines = allTasks
+      .filter(t => t.deadline && new Date(t.deadline) <= sevenDaysFromNow && new Date(t.deadline) >= new Date())
+      .map(t => ({
+        _id: t._id,
+        title: t.title,
+        deadline: t.deadline,
+        estimatedHours: t.estimatedHours || 0,
+        priority: t.priority || 'normal',
+        project: t.projectId?.toString() || '',
+      }))
+      .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
+      .slice(0, 5);
 
     res.json({
       success: true,
@@ -169,15 +281,29 @@ const getUserWorkload = async (req, res) => {
           fullName: user.fullName,
           email: user.email,
           department: user.department,
+          employeeId: user.employeeId || user.employeeID || '',
+          role: user.role,
         },
         workload: {
           capacityPercentage,
           statusColor,
           activeHours,
-          taskCount,
+          taskCount: totalTasks,
+          completedTaskCount: completedTasks,
+          activeTaskCount: activeTasks,
           monthlyCapacity: Math.round(monthlyCapacity),
           roleLevel,
-        }
+        },
+        breakdown: {
+          taskBreakdown: {
+            pending: totalTasks - activeTasks - completedTasks,
+            inProgress: activeTasks,
+            submitted: completedTasks,
+          },
+          priorityDistribution,
+          upcomingDeadlines,
+        },
+        projects: 0,
       }
     });
   } catch (error) {
@@ -196,35 +322,64 @@ const getWorkloadSummary = async (req, res) => {
       .populate('department', 'name code')
       .select('_id fullName email role department');
 
-    // Get task counts
-    const taskCounts = await Task.aggregate([
+    // Get ALL task counts
+    const allTaskCounts = await Task.aggregate([
       {
         $match: {
-          status: { $in: ['pending', 'in_progress', 'assigned', 'todo', 'in_progress'] },
           assignedTo: { $ne: null }
         }
       },
       {
         $group: {
           _id: '$assignedTo',
-          count: { $sum: 1 }
+          total: { $sum: 1 },
+          completed: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', ['completed', 'done', 'closed']] },
+                1,
+                0
+              ]
+            }
+          },
+          active: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', ['pending', 'in_progress', 'assigned', 'todo']] },
+                1,
+                0
+              ]
+            }
+          }
         }
       }
     ]);
 
     const taskMap = {};
-    taskCounts.forEach(item => {
-      taskMap[item._id.toString()] = item.count;
+    allTaskCounts.forEach(item => {
+      taskMap[item._id.toString()] = {
+        total: item.total,
+        completed: item.completed,
+        active: item.active,
+      };
     });
 
     let totalActiveHours = 0;
     let totalCapacity = 0;
     let overloadedCount = 0;
     let nearCapacityCount = 0;
+    let totalTasks = 0;
+    let totalCompletedTasks = 0;
 
     const userWorkloads = users.map(user => {
-      const taskCount = taskMap[user._id.toString()] || 0;
-      
+      const userTasks = taskMap[user._id.toString()] || { total: 0, completed: 0, active: 0 };
+      const taskCount = userTasks.total;
+      const completedCount = userTasks.completed;
+      const activeCount = userTasks.active;
+
+      totalTasks += taskCount;
+      totalCompletedTasks += completedCount;
+
       const roleLevelMap = {
         super_admin: 100,
         admin: 90,
@@ -234,11 +389,11 @@ const getWorkloadSummary = async (req, res) => {
         line_manager: 60,
         employee: 50,
       };
-      
+
       const roleLevel = roleLevelMap[user.role] || 50;
-      const activeHours = taskCount * 8;
+      const activeHours = activeCount * 8;
       const monthlyCapacity = roleLevel * 0.8;
-      const capacityPercentage = monthlyCapacity > 0 
+      const capacityPercentage = monthlyCapacity > 0
         ? Math.min(Math.round((activeHours / monthlyCapacity) * 100), 150)
         : 0;
 
@@ -253,6 +408,8 @@ const getWorkloadSummary = async (req, res) => {
         fullName: user.fullName,
         department: user.department?.name || 'No Department',
         taskCount,
+        completedCount,
+        activeCount,
         capacityPercentage,
         statusColor: capacityPercentage > 90 ? 'red' : capacityPercentage > 70 ? 'amber' : 'green',
       };
@@ -263,7 +420,9 @@ const getWorkloadSummary = async (req, res) => {
       data: {
         summary: {
           totalUsers: users.length,
-          totalActiveTasks: Object.values(taskMap).reduce((a, b) => a + b, 0),
+          totalTasks,
+          totalCompletedTasks,
+          totalActiveTasks: totalTasks - totalCompletedTasks,
           totalActiveHours,
           totalCapacity: Math.round(totalCapacity),
           averageCapacity: users.length > 0 ? Math.round((totalActiveHours / totalCapacity) * 100) : 0,
