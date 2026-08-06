@@ -8,34 +8,40 @@ const { User } = require("../models/User.model");
 const getProjects = async (req, res) => {
   try {
     const { status, priority, departmentId, managerId, search } = req.query;
-    let query = { isActive: true };
 
-    if (status && status !== "all") query.status = status;
-    if (priority) query.priority = priority;
-    if (departmentId) query.departmentId = departmentId;
-    if (managerId) query.managerId = managerId;
+    // Build filter - ADD isActive: true to only show active projects
+    const filter = { isActive: true };
+    if (status) filter.status = status;
+    if (priority) filter.priority = priority;
+    if (departmentId) filter.departmentId = departmentId;
+    if (managerId) filter.managerId = managerId;
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { code: { $regex: search, $options: "i" } },
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
       ];
     }
 
-    const projects = await Project.find(query)
-      .populate("departmentId", "name code")
-      .populate("managerId", "fullName email")
-      .populate("createdBy", "fullName email")
-      .populate("archivedBy", "fullName email")
+    const projects = await Project.find(filter)
+      .populate('managerId', 'fullName email role')
+      .populate('departmentId', 'name code')
+      .populate('createdBy', 'fullName email')
+      .populate('teamMembers.userId', 'fullName email role')
+      .populate('archivedBy', 'fullName email')
       .sort({ createdAt: -1 });
 
-    res.json({
+    res.status(200).json({
       success: true,
-      data: projects,
-      count: projects.length,
+      data: projects
     });
   } catch (error) {
-    console.error("Get projects error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error('Error fetching projects:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch projects',
+      error: error.message
+    });
   }
 };
 
@@ -45,22 +51,32 @@ const getProjects = async (req, res) => {
 const getProjectById = async (req, res) => {
   try {
     const { id } = req.params;
+
     const project = await Project.findById(id)
-      .populate("departmentId", "name code")
-      .populate("managerId", "fullName email")
-      .populate("createdBy", "fullName email")
-      .populate("archivedBy", "fullName email");
+      .populate('managerId', 'fullName email role')
+      .populate('departmentId', 'name code')
+      .populate('createdBy', 'fullName email')
+      .populate('teamMembers.userId', 'fullName email role') // Populate team members
+      .populate('archivedBy', 'fullName email');
 
     if (!project) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Project not found" });
+      return res.status(404).json({
+        success: false,
+        message: 'Project not found'
+      });
     }
 
-    res.json({ success: true, data: project });
+    res.status(200).json({
+      success: true,
+      data: project
+    });
   } catch (error) {
-    console.error("Get project error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error('Error fetching project:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch project',
+      error: error.message
+    });
   }
 };
 
@@ -897,6 +913,129 @@ const getProjectContributors = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+// controllers/project.controller.js
+
+// Add team members to project
+const addTeamMembers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userIds } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of user IDs"
+      });
+    }
+
+    const project = await Project.findById(id);
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found"
+      });
+    }
+
+    // Get existing team member IDs
+    const existingMemberIds = project.teamMembers.map(
+      member => member.userId.toString()
+    );
+
+    // Filter out users already in the team
+    const newUserIds = userIds.filter(
+      userId => !existingMemberIds.includes(userId)
+    );
+
+    if (newUserIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "All selected users are already team members"
+      });
+    }
+
+    // Add new team members
+    const newMembers = newUserIds.map(userId => ({
+      userId: userId,
+      role: "member",
+      joinedAt: new Date()
+    }));
+
+    project.teamMembers.push(...newMembers);
+    await project.save();
+
+    // Populate the team members with user details
+    const populatedProject = await Project.findById(id)
+      .populate('managerId', 'fullName email role')
+      .populate('departmentId', 'name code')
+      .populate('createdBy', 'fullName email')
+      .populate('teamMembers.userId', 'fullName email role') // Populate team members
+      .populate('archivedBy', 'fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: `${newUserIds.length} team member(s) added successfully`,
+      data: populatedProject
+    });
+  } catch (error) {
+    console.error("Error adding team members:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to add team members",
+      error: error.message
+    });
+  }
+};
+
+// Remove team members from project
+const removeTeamMembers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userIds } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of user IDs"
+      });
+    }
+
+    const project = await Project.findById(id);
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found"
+      });
+    }
+
+    // Remove the specified users from teamMembers
+    project.teamMembers = project.teamMembers.filter(
+      member => !userIds.includes(member.userId.toString())
+    );
+
+    await project.save();
+
+    // Populate the team members with user details
+    const populatedProject = await Project.findById(id)
+      .populate('managerId', 'fullName email role')
+      .populate('departmentId', 'name code')
+      .populate('createdBy', 'fullName email')
+      .populate('teamMembers.userId', 'fullName email role') // Populate team members
+      .populate('archivedBy', 'fullName email');
+
+    res.status(200).json({
+      success: true,
+      message: `${userIds.length} team member(s) removed successfully`,
+      data: populatedProject
+    });
+  } catch (error) {
+    console.error("Error removing team members:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to remove team members",
+      error: error.message
+    });
+  }
+};
 
 // ============================================================
 // EXPORT ALL FUNCTIONS
@@ -916,5 +1055,7 @@ module.exports = {
   getTeamPerformance,
   archiveProject,
   unarchiveProject,
-  getProjectContributors
+  getProjectContributors,
+  addTeamMembers,
+  removeTeamMembers,
 };

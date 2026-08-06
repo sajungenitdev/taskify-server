@@ -17,6 +17,8 @@ const {
   archiveProject,
   unarchiveProject,
   getProjectContributors,
+  addTeamMembers,
+  removeTeamMembers,
 } = require("../controllers/project.controller");
 
 const router = express.Router();
@@ -51,5 +53,8 @@ router.get("/:id/team-performance", getTeamPerformance);
 router.delete("/:id", deleteProject);
 router.get("/:id/contributors", getProjectContributors);
 
+// Team management routes
+router.post("/:id/team/add", addTeamMembers);
+router.post("/:id/team/remove", removeTeamMembers);
 
 module.exports = router;
