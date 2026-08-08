@@ -13,7 +13,11 @@ const router = express.Router();
 router.use(authenticate);
 
 // Get workload capacity for all users (admins only)
-router.get("/capacity", requireRole("super_admin", "admin", "hr_manager"), getWorkloadCapacity);
+router.get(
+  "/capacity",
+  requireRole("super_admin", "admin", "hr_manager", "dept_manager", "line_manager", "project_manager"),
+  getWorkloadCapacity
+);
 
 // Get workload for a specific user
 router.get("/user/:userId", getUserWorkload);

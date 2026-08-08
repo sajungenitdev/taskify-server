@@ -799,10 +799,10 @@ const updateTask = async (req, res) => {
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, rejectionReason, approvalNote, evidenceUrls } = req.body;
+    const { status, rejectionReason, approvalNote, evidenceUrls, actualMinutes } = req.body; // ✅ ADD actualMinutes
     const user = req.user;
 
-    console.log("📝 updateTaskStatus called with:", { id, status, evidenceUrls });
+    console.log("📝 updateTaskStatus called with:", { id, status, actualMinutes, evidenceUrls });
 
     if (!status) {
       return res.status(400).json({ success: false, message: "Status is required" });
@@ -828,21 +828,16 @@ const updateTaskStatus = async (req, res) => {
     const isAssignee = oldTask.assignedTo && oldTask.assignedTo._id.toString() === user._id.toString();
     const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
 
-    // Department Manager check
     let isDeptManager = false;
     if (user.role === "dept_manager" && oldTask.departmentId) {
       isDeptManager = user.departmentId && user.departmentId.toString() === oldTask.departmentId.toString();
     }
 
-    // Project Manager check
     let isProjectManager = false;
     if (user.role === "project_manager") {
-      // Check if task is in their department
       if (oldTask.departmentId && user.departmentId) {
         isProjectManager = user.departmentId.toString() === oldTask.departmentId.toString();
       }
-
-      // Check if they are the project manager
       if (!isProjectManager && oldTask.projectId) {
         const project = await Project.findById(oldTask.projectId._id)
           .select("projectManager")
@@ -853,7 +848,6 @@ const updateTaskStatus = async (req, res) => {
       }
     }
 
-    // Line Manager check
     let isLineManager = false;
     if (user.role === "line_manager" && oldTask.assignedTo) {
       const assignee = await User.findById(oldTask.assignedTo._id)
@@ -874,8 +868,6 @@ const updateTaskStatus = async (req, res) => {
       isLineManager,
       canUpdate,
       userRole: user.role,
-      userDepartmentId: user.departmentId,
-      taskDepartmentId: oldTask.departmentId
     });
 
     if (!canUpdate) {
@@ -906,6 +898,21 @@ const updateTaskStatus = async (req, res) => {
 
     // ============ BUILD UPDATE OBJECT ============
     const updateData = { status: finalStatus };
+
+    // ✅ FIX: Handle actualMinutes
+    if (actualMinutes !== undefined && actualMinutes !== null) {
+      // Validate the value is a number
+      if (typeof actualMinutes !== 'number' || actualMinutes < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "actualMinutes must be a positive number",
+        });
+      }
+
+      // Round to 2 decimal places for cleanliness
+      updateData.actualMinutes = Math.round(actualMinutes * 100) / 100;
+      console.log(`⏱️ Updating actualMinutes to: ${updateData.actualMinutes}`);
+    }
 
     // Handle evidence
     if (evidenceUrls && Array.isArray(evidenceUrls) && evidenceUrls.length > 0) {
@@ -952,6 +959,7 @@ const updateTaskStatus = async (req, res) => {
     console.log("✅ Task updated:", {
       id: task._id,
       status: task.status,
+      actualMinutes: task.actualMinutes,
       evidenceUrls: task.evidenceUrls,
       evidenceSubmitted: task.evidenceSubmitted,
     });
@@ -2442,6 +2450,83 @@ const completeTask = async (req, res) => {
   }
 };
 
+// controllers/task.controller.js
+
+// ============================================================
+// UPDATE TASK TIME (Dedicated endpoint for time tracking)
+// ============================================================
+const updateTaskTime = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { actualMinutes } = req.body;
+
+    console.log("⏱️ updateTaskTime called:", { id, actualMinutes });
+
+    if (actualMinutes === undefined || actualMinutes === null) {
+      return res.status(400).json({
+        success: false,
+        message: "actualMinutes is required",
+      });
+    }
+
+    if (typeof actualMinutes !== 'number' || actualMinutes < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "actualMinutes must be a positive number",
+      });
+    }
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check if user has permission
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
+    const isManager = ['admin', 'super_admin', 'hr_manager', 'dept_manager', 'project_manager', 'line_manager'].includes(req.user.role);
+
+    if (!isAssignee && !isManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to update task time",
+      });
+    }
+
+    // Round to 2 decimal places
+    const roundedMinutes = Math.round(actualMinutes * 100) / 100;
+
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      {
+        actualMinutes: roundedMinutes,
+        updatedAt: new Date()
+      },
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .lean();
+
+    console.log(`⏱️ Task ${id} time updated: ${roundedMinutes}m by ${req.user.email}`);
+
+    res.status(200).json({
+      success: true,
+      message: "Task time updated successfully",
+      data: updatedTask,
+    });
+  } catch (error) {
+    console.error("Error updating task time:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update task time",
+      error: error.message,
+    });
+  }
+};
 // ============================================================
 // EXPORT ALL CONTROLLERS
 // ============================================================
@@ -2470,4 +2555,5 @@ module.exports = {
   pauseTaskTimer,
   resumeTaskTimer,
   completeTask,
+  updateTaskTime,
 };

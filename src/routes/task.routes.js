@@ -24,6 +24,7 @@ const {
   completeTask,
   pauseTaskTimer,
   startTaskTimer,
+  updateTaskTime,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -235,57 +236,15 @@ router.post(
   ],
   approveExtension,
 );
-
-// ============================================================
-// ✅ OPTIONAL: Custom middleware for more flexible permissions
-// ============================================================
-// If you want to allow task creators/assignees to approve too:
-/*
-router.post(
-  "/:id/approve-extension/:extensionId",
+// Update task time (dedicated endpoint)
+router.patch(
+  "/:id/time",
   authenticate,
-  async (req, res, next) => {
-    try {
-      const task = await Task.findById(req.params.id);
-      if (!task) {
-        return res.status(404).json({ success: false, message: "Task not found" });
-      }
-
-      const userRole = req.user.role;
-      const userId = req.user._id;
-
-      // Allow if user is admin/manager
-      const allowedRoles = ["admin", "dept_manager", "line_manager", "project_manager", "hr_manager", "super_admin"];
-      if (allowedRoles.includes(userRole)) {
-        return next();
-      }
-
-      // Allow if user is the task creator
-      if (task.createdBy && task.createdBy.toString() === userId.toString()) {
-        return next();
-      }
-
-      // Allow if user is the task assignee
-      if (task.assignedTo && task.assignedTo.toString() === userId.toString()) {
-        return next();
-      }
-
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. You don't have permission to approve extension requests."
-      });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-  },
   [
-    body("newDeadline")
-      .isISO8601()
-      .withMessage("Valid new deadline is required"),
+    body("actualMinutes").isNumeric().withMessage("actualMinutes must be a number"),
   ],
-  approveExtension,
+  updateTaskTime
 );
-*/
 
 // ============= COMMENT ROUTES =============
 router.get("/:id/comments", getTaskComments);
