@@ -1610,6 +1610,8 @@ const uploadProfilePhoto = async (req, res) => {
 // ============================================================
 // COMPLETE ONBOARDING
 // ============================================================
+// controllers/auth.controller.js
+
 const completeOnboarding = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -1626,25 +1628,55 @@ const completeOnboarding = async (req, res) => {
       department,
     } = req.body;
 
+    console.log('📝 Onboarding Data Received:', {
+      fullName,
+      phoneNumber,
+      location,
+      department,
+      position,
+      employeeId,
+      bio,
+      hasPhoto: !!profilePhoto,
+      photoLength: profilePhoto ? profilePhoto.length : 0
+    });
+
+    // ✅ Build updates object
     const updates = {
       fullName: fullName || req.user.fullName,
       phoneNumber: phoneNumber || null,
-      dailyHoursTarget: dailyHoursTarget || 8,
       notificationPreferences: notificationPreferences || {
         email: true,
         push: true,
-        taskReminders: true,
+        taskReminder: true,
+        taskUpdates: true,
+        deadlineAlert: true,
+        teamUpdate: true,
       },
       firstLogin: false,
       onboardingCompleted: true,
+      // ✅ Set departmentId to null explicitly
+      departmentId: null,
     };
 
+    // ✅ Add optional fields
     if (position) updates.position = position;
     if (employeeId) updates.employeeId = employeeId;
     if (location) updates.location = location;
     if (bio) updates.bio = bio;
-    if (department) updates.department = department;
 
+    // ✅ Handle department
+    if (department) {
+      const mongoose = require('mongoose');
+      if (mongoose.Types.ObjectId.isValid(department)) {
+        updates.department = department;
+        // ✅ Also set departmentId to the same value
+        updates.departmentId = department;
+      } else {
+        console.log('⚠️ Invalid department ObjectId, skipping');
+      }
+    }
+
+    // ✅ Handle profile photo
     if (profilePhoto) {
       if (!profilePhoto.startsWith('data:image/')) {
         return res.status(400).json({
@@ -1656,28 +1688,60 @@ const completeOnboarding = async (req, res) => {
       updates.avatar = profilePhoto;
     }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { $set: updates },
-      { new: true, runValidators: true },
-    )
-      .select("-password")
-      .populate("department", "name code")
-      .populate("roles", "name code level");
+    console.log('👤 User before update:', {
+      id: req.user._id,
+      fullName: req.user.fullName,
+      hasPhoto: !!req.user.profilePhoto
+    });
 
-    let userObj = user.toObject();
-    userObj = ensureProfilePhoto(userObj);
+    // ✅ Update user
+    const user = await User.findOneAndUpdate(
+      { _id: userId },
+      { $set: updates },
+      {
+        new: true,
+        runValidators: true,
+        strictPopulate: false,
+        lean: true
+      }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // ✅ Remove sensitive fields
+    delete user.password;
+    delete user.__v;
+
+    console.log('✅ User after update:', {
+      id: user._id,
+      fullName: user.fullName,
+      phoneNumber: user.phoneNumber,
+      location: user.location,
+      bio: user.bio,
+      position: user.position,
+      employeeId: user.employeeId,
+      department: user.department,
+      departmentId: user.departmentId,
+      hasPhoto: !!user.profilePhoto,
+      onboardingCompleted: user.onboardingCompleted
+    });
 
     res.json({
       success: true,
       message: "Onboarding completed successfully",
-      data: userObj,
+      data: user,
     });
+
   } catch (error) {
-    console.error("Onboarding error:", error);
+    console.error("❌ Error completing onboarding:", error);
     res.status(500).json({
       success: false,
-      message: "Server error: " + error.message,
+      message: error.message || "Server error completing onboarding",
     });
   }
 };

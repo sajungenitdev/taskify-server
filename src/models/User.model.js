@@ -62,6 +62,19 @@ const userSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
     },
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      required: false,
+      default: null,
+      index: true,
+      set: function (v) {
+        if (v === '' || v === null || v === undefined) {
+          return null;
+        }
+        return v;
+      }
+    },
     position: {
       type: String,
       trim: true,
