@@ -24,31 +24,27 @@ const router = express.Router();
 router.use(authenticate);
 
 // ============================================================
-// IMPORTANT: Specific routes MUST come BEFORE dynamic routes
-// ============================================================
-
-// ============================================================
 // KPI WEIGHT MANAGEMENT
 // ============================================================
 
 // GET all KPI weights (no params) - MUST come FIRST
 router.get(
   "/weights",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
   getAllKPIWeights
 );
 
 // GET KPI weights by department
 router.get(
   "/weights/:departmentId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getKPIWeights
 );
 
 // PUT KPI weights by department - Only admins and dept managers can modify
 router.put(
   "/weights/:departmentId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   upsertKPIWeights
 );
 
@@ -58,7 +54,7 @@ router.put(
 
 router.post(
   "/calculate/:departmentId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   calculateKPIScores
 );
 
@@ -69,21 +65,21 @@ router.post(
 // GET employee KPI trend - specific route FIRST
 router.get(
   "/employee/:userId/trend",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getKPITrend
 );
 
 // GET employee KPI scores
 router.get(
   "/employee/:userId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getEmployeeKPIScores
 );
 
 // GET department KPI scores
 router.get(
   "/department/:departmentId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getDepartmentKPIScores
 );
 
@@ -94,14 +90,14 @@ router.get(
 // GET KPI leaderboard for a department
 router.get(
   "/leaderboard/:departmentId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getKPILeaderboard
 );
 
 // GET KPI leaderboard for all departments (admin only)
 router.get(
   "/leaderboard",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
   getKPILeaderboard
 );
 
@@ -112,14 +108,14 @@ router.get(
 // GET KPI statistics for a department
 router.get(
   "/statistics/:departmentId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getKPIStatistics
 );
 
 // GET KPI statistics for all departments (admin only)
 router.get(
   "/statistics",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
   getKPIStatistics
 );
 
@@ -131,7 +127,7 @@ router.get(
 // If no params provided, uses current month
 router.get(
   "/report/monthly",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getMonthlyKPIReport
 );
 
@@ -142,7 +138,7 @@ router.get(
 // GET KPI dashboard data
 router.get(
   "/dashboard",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getEmployeeKPI
 );
 

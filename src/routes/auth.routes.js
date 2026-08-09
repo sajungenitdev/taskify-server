@@ -207,7 +207,7 @@ router.get("/users/active", getActiveUsers);
  */
 router.get(
   "/users/:id",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee"),
   getUserProfile,
 );
 
@@ -218,7 +218,7 @@ router.get(
  */
 router.put(
   "/users/:id",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee"),
   updateUser,
 );
 
@@ -227,27 +227,14 @@ router.put(
  * @desc    Delete user by ID
  * @access  Private (Super Admin only)
  */
-router.delete("/users/:id", requireRole("super_admin"), deleteUser);
+router.delete("/users/:id", requireRole("super_admin", "admin"), deleteUser);
 
 /**
  * @route   PUT /api/auth/users/:id/role
  * @desc    Change user role
  * @access  Private (Super Admin only)
  */
-router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
-
-// ✅ ADD THIS ROUTE - Admin can change any user's password
-/**
- * @route   POST /api/auth/users/:id/change-password
- * @desc    Change user password by ID (Admin only)
- * @access  Private (Admin, Super Admin, HR Manager only)
- * @body    { newPassword: "string" }
- */
-// router.post(
-//   "/users/:id/change-password",
-//   requireRole("admin", "super_admin", "hr_manager"),
-//   changeUserPassword
-// );
+router.put("/users/:id/role", requireRole("super_admin", "admin"), changeUserRole);
 
 // ============================================================
 // EXPORT AND IMPORT ROUTES (Admin only)
@@ -260,7 +247,7 @@ router.put("/users/:id/role", requireRole("super_admin"), changeUserRole);
  */
 router.get(
   "/export",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
   exportUsers,
 );
 

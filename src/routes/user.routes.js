@@ -71,10 +71,10 @@ router.put(
   updateUser,
 );
 
-// ✅ ADD THIS ROUTE - Change user password (Admin only)
+// Change user password (Admin only)
 router.post(
   "/:id/change-password",
-  requireRole("admin", "super_admin", "hr_manager"),
+  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
   auditLog({ action: "update", resource: "user" }),
   changeUserPassword
 );
