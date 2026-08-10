@@ -25,10 +25,6 @@ const {
   pauseTaskTimer,
   startTaskTimer,
   updateTaskTime,
-  // 🆕 NEW: Milestone & Sub-task Controllers
-  getSubTasks,
-  getMilestones,
-  getTaskHierarchy,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -69,31 +65,6 @@ router.get("/", getTasks);
 router.get("/project/:projectId", getTasksByProject);
 router.get("/project/:projectId/summary", getProjectTasksSummary);
 
-// ============================================================
-// 🆕 NEW: MILESTONE & SUB-TASK ROUTES
-// ============================================================
-
-// Get all milestones for a project
-router.get(
-  "/project/:projectId/milestones",
-  authenticate,
-  getMilestones
-);
-
-// Get sub-tasks of a specific task
-router.get(
-  "/:taskId/subtasks",
-  authenticate,
-  getSubTasks
-);
-
-// Get complete task hierarchy (parent, siblings, sub-tasks)
-router.get(
-  "/:taskId/hierarchy",
-  authenticate,
-  getTaskHierarchy
-);
-
 // ============= BULK OPERATIONS =============
 router.post(
   "/project/:projectId/bulk",
@@ -110,7 +81,7 @@ router.post(
       .isISO8601()
       .withMessage("Each task must have a valid deadline"),
   ],
-  bulkCreateTasks,
+  bulkCreateTasksWithoutProject,
 );
 
 router.post(
@@ -165,10 +136,6 @@ router.post(
     body("assignedTo").notEmpty().withMessage("AssignedTo is required"),
     body("projectId").notEmpty().withMessage("ProjectId is required"),
     body("deadline").isISO8601().withMessage("Valid deadline is required"),
-    // 🆕 Optional milestone validation
-    body("isMilestone").optional().isBoolean().withMessage("isMilestone must be boolean"),
-    body("parentTaskId").optional().isMongoId().withMessage("parentTaskId must be valid ObjectId"),
-    body("startDate").optional().isISO8601().withMessage("startDate must be valid date"),
   ],
   createTask,
 );
@@ -189,8 +156,6 @@ router.patch(
       "overdue",
       "rejected",
     ]).withMessage("Invalid status value"),
-    body("actualMinutes").optional().isNumeric().withMessage("actualMinutes must be a number"),
-    body("evidenceUrls").optional().isArray().withMessage("evidenceUrls must be an array"),
   ],
   updateTaskStatus,
 );
@@ -251,14 +216,14 @@ router.patch(
 );
 
 // ============================================================
-// Approve Extension - With role-based access
+// ✅ FIXED: Approve Extension - More inclusive roles
 // ============================================================
 router.post(
   "/:id/approve-extension/:extensionId",
   authenticate,
   requireRole(
     "admin",
-    "super_admin",
+    "super_admin",   // ✅ ADD THIS
     "hr_manager",
     "dept_manager",
     "project_manager",
@@ -271,7 +236,6 @@ router.post(
   ],
   approveExtension,
 );
-
 // Update task time (dedicated endpoint)
 router.patch(
   "/:id/time",
@@ -304,16 +268,7 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 
 // ============= /:id routes - MUST COME LAST =============
 router.get("/:id", getTaskById);
-router.put(
-  "/:id",
-  authenticate,
-  [
-    // 🆕 Optional validation for milestone updates
-    body("isMilestone").optional().isBoolean().withMessage("isMilestone must be boolean"),
-    body("parentTaskId").optional().isMongoId().withMessage("parentTaskId must be valid ObjectId"),
-  ],
-  updateTask
-);
+router.put("/:id", authenticate, updateTask);
 router.delete(
   "/:id",
   authenticate,
