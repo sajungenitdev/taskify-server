@@ -1262,16 +1262,39 @@ const updateTaskTime = async (req, res) => {
 // ============================================================
 // 🆕 GET SUB-TASKS
 // ============================================================
+// controllers/task.controller.js - getSubTasks ফাংশন
+
 const getSubTasks = async (req, res) => {
   try {
-    const { taskId } = req.params;
+    // ✅ FIX: উভয় প্যারামিটার চেক করুন
+    const taskId = req.params.id || req.params.taskId;
+
+    console.log("🔍 getSubTasks called with taskId:", taskId);
+
+    if (!taskId) {
+      return res.status(400).json({
+        success: false,
+        message: "Task ID is required",
+      });
+    }
+
     const user = req.user;
 
     const parentTask = await Task.findById(taskId);
     if (!parentTask) {
-      return res.status(404).json({
-        success: false,
-        message: "Parent task not found",
+      // ✅ 404 এর পরিবর্তে empty array রিটার্ন করুন
+      return res.status(200).json({
+        success: true,
+        data: [],
+        stats: {
+          total: 0,
+          completed: 0,
+          inProgress: 0,
+          pending: 0,
+          overdue: 0,
+        },
+        parentTask: null,
+        message: "No sub-tasks found"
       });
     }
 
@@ -1288,24 +1311,44 @@ const getSubTasks = async (req, res) => {
       });
     }
 
+    // ✅ subTaskCount চেক করুন
+    if (parentTask.subTaskCount === 0) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        stats: {
+          total: 0,
+          completed: 0,
+          inProgress: 0,
+          pending: 0,
+          overdue: 0,
+        },
+        parentTask: {
+          _id: parentTask._id,
+          title: parentTask.title,
+          progress: parentTask.progress,
+        }
+      });
+    }
+
     const subTasks = await Task.find({ parentTaskId: taskId })
       .select("_id title description status priority deadline estimatedHours progress assignedTo isMilestone startDate")
       .populate("assignedTo", "fullName email")
       .sort({ order: 1, createdAt: 1 })
       .lean();
 
-    const stats = {
-      total: subTasks.length,
-      completed: subTasks.filter(t => t.status === 'completed' || t.status === 'done').length,
-      inProgress: subTasks.filter(t => t.status === 'in_progress').length,
-      pending: subTasks.filter(t => t.status === 'pending').length,
-      overdue: subTasks.filter(t => t.status === 'overdue').length,
-    };
+    console.log(`✅ Found ${subTasks.length} sub-tasks for task ${taskId}`);
 
     res.json({
       success: true,
       data: subTasks,
-      stats,
+      stats: {
+        total: subTasks.length,
+        completed: subTasks.filter(t => t.status === 'completed' || t.status === 'done').length,
+        inProgress: subTasks.filter(t => t.status === 'in_progress').length,
+        pending: subTasks.filter(t => t.status === 'pending').length,
+        overdue: subTasks.filter(t => t.status === 'overdue').length,
+      },
       parentTask: {
         _id: parentTask._id,
         title: parentTask.title,
@@ -1313,7 +1356,7 @@ const getSubTasks = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Get sub-tasks error:", error);
+    console.error("❌ Get sub-tasks error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
@@ -2729,6 +2772,877 @@ const getTaskStatistics = async (req, res) => {
   }
 };
 
+
+// ============================================================
+// 🆕 ADD DEPENDENCY TO TASK
+// ============================================================
+const addDependency = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dependencyTaskId, type = "FS", lag = 0 } = req.body;
+    const user = req.user;
+
+    console.log("🔗 addDependency called:", { taskId: id, dependencyTaskId, type, lag });
+
+    // Validate required fields
+    if (!dependencyTaskId) {
+      return res.status(400).json({
+        success: false,
+        message: "Dependency task ID is required",
+      });
+    }
+
+    // Get both tasks
+    const [task, dependencyTask] = await Promise.all([
+      Task.findById(id),
+      Task.findById(dependencyTaskId),
+    ]);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    if (!dependencyTask) {
+      return res.status(404).json({
+        success: false,
+        message: "Dependency task not found",
+      });
+    }
+
+    // Check permission
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+    const isProjectManager = user.role === "project_manager" && task.departmentId?.toString() === user.departmentId?.toString();
+
+    if (!isAdmin && !isAssignee && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to add dependencies to this task",
+      });
+    }
+
+    // Check if dependency already exists
+    const existingDependency = task.dependencies?.find(
+      (d) => d.taskId.toString() === dependencyTaskId
+    );
+
+    if (existingDependency) {
+      return res.status(400).json({
+        success: false,
+        message: "This dependency already exists",
+      });
+    }
+
+    // Check for circular dependency
+    const circular = await task.checkCircularDependencies(id, [
+      ...(task.dependencies || []),
+      { taskId: dependencyTaskId, type, lag },
+    ]);
+
+    if (circular) {
+      return res.status(400).json({
+        success: false,
+        message: `Circular dependency detected: ${circular}`,
+      });
+    }
+
+    // Add dependency
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      {
+        $push: {
+          dependencies: {
+            taskId: dependencyTaskId,
+            type: type || "FS",
+            lag: lag || 0,
+            addedAt: new Date(),
+          },
+        },
+        $addToSet: {
+          dependents: dependencyTaskId,
+        },
+      },
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .lean();
+
+    // Also add to dependent's dependents array
+    await Task.findByIdAndUpdate(dependencyTaskId, {
+      $addToSet: {
+        dependents: id,
+      },
+    });
+
+    // Send notification
+    setImmediate(() => {
+      createNotification({
+        userId: dependencyTask.assignedTo,
+        title: "🔗 New Dependency Added",
+        message: `Task "${task.title}" now depends on your task "${dependencyTask.title}"`,
+        type: "info",
+        category: "task_update",
+        taskId: task._id,
+        taskTitle: task.title,
+        actionUrl: `/tasks/${task._id}`,
+        metadata: {
+          dependencyType: type,
+          lag: lag,
+        },
+      }).catch(err => console.error("Notification error:", err));
+    });
+
+    res.json({
+      success: true,
+      message: "Dependency added successfully",
+      data: updatedTask,
+    });
+
+  } catch (error) {
+    console.error("❌ Add dependency error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 REMOVE DEPENDENCY FROM TASK
+// ============================================================
+const removeDependency = async (req, res) => {
+  try {
+    const { id, dependencyId } = req.params;
+    const user = req.user;
+
+    console.log("🔗 removeDependency called:", { taskId: id, dependencyId });
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check permission
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+    const isProjectManager = user.role === "project_manager" && task.departmentId?.toString() === user.departmentId?.toString();
+
+    if (!isAdmin && !isAssignee && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to remove dependencies from this task",
+      });
+    }
+
+    // Check if dependency exists
+    const dependency = task.dependencies?.find(
+      (d) => d.taskId.toString() === dependencyId
+    );
+
+    if (!dependency) {
+      return res.status(404).json({
+        success: false,
+        message: "Dependency not found",
+      });
+    }
+
+    // Remove dependency
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      {
+        $pull: {
+          dependencies: { taskId: dependencyId },
+        },
+        $pull: {
+          dependents: dependencyId,
+        },
+      },
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .lean();
+
+    // Remove from dependent's dependents array
+    await Task.findByIdAndUpdate(dependencyId, {
+      $pull: {
+        dependents: id,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Dependency removed successfully",
+      data: updatedTask,
+    });
+
+  } catch (error) {
+    console.error("❌ Remove dependency error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 GET TASK DEPENDENCIES
+// ============================================================
+// ============================================================
+// 🆕 GET TASK DEPENDENCIES - FIXED
+// ============================================================
+const getTaskDependencies = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    console.log("🔗 getTaskDependencies called:", { taskId: id });
+
+    const task = await Task.findById(id)
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .lean();
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check permission
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo._id.toString() === user._id.toString();
+    const isCreator = task.assignedBy && task.assignedBy._id.toString() === user._id.toString();
+
+    if (!isAdmin && !isAssignee && !isCreator) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to view dependencies of this task",
+      });
+    }
+
+    // Get predecessor tasks (tasks this task depends on)
+    const predecessorIds = (task.dependencies || []).map(d => d.taskId);
+    const predecessors = await Task.find({
+      _id: { $in: predecessorIds },
+    })
+      .select("_id title status deadline priority")
+      .lean();
+
+    // Get dependent tasks (tasks that depend on this task)
+    const dependents = await Task.find({
+      "dependencies.taskId": task._id,
+    })
+      .select("_id title status deadline priority")
+      .lean();
+
+    // 🆕 Check dependency status - inline without calling external function
+    let dependencyStatus = {
+      isBlocked: false,
+      blockedBy: [],
+      allCompleted: true,
+      progress: 100,
+    };
+
+    if (task.dependencies && task.dependencies.length > 0) {
+      const predIds = task.dependencies.map(d => d.taskId);
+      const preds = await Task.find({
+        _id: { $in: predIds },
+      }).lean();
+
+      const blockedBy = [];
+      let allCompleted = true;
+      let totalProgress = 0;
+
+      preds.forEach(pred => {
+        const isCompleted = pred.status === "completed" || pred.status === "done";
+        if (!isCompleted) {
+          blockedBy.push({
+            _id: pred._id,
+            title: pred.title,
+            status: pred.status,
+            deadline: pred.deadline,
+          });
+          allCompleted = false;
+        }
+        totalProgress += pred.progress || 0;
+      });
+
+      const avgProgress = preds.length > 0
+        ? Math.round(totalProgress / preds.length)
+        : 100;
+
+      dependencyStatus = {
+        isBlocked: blockedBy.length > 0,
+        blockedBy: blockedBy,
+        allCompleted: allCompleted,
+        progress: avgProgress,
+        totalPredecessors: preds.length,
+        completedPredecessors: preds.length - blockedBy.length,
+      };
+    }
+
+    const response = {
+      task: {
+        _id: task._id,
+        title: task.title,
+        status: task.status,
+        deadline: task.deadline,
+      },
+      predecessors: predecessors.map(p => ({
+        ...p,
+        dependencyType: task.dependencies?.find(d => d.taskId.toString() === p._id.toString())?.type || "FS",
+        lag: task.dependencies?.find(d => d.taskId.toString() === p._id.toString())?.lag || 0,
+      })),
+      dependents: dependents,
+      status: dependencyStatus,
+      stats: {
+        totalPredecessors: predecessors.length,
+        totalDependents: dependents.length,
+        totalDependencies: (task.dependencies || []).length,
+        isBlocked: dependencyStatus.isBlocked,
+        blockedBy: dependencyStatus.blockedBy,
+      },
+    };
+
+    res.json({
+      success: true,
+      data: response,
+    });
+
+  } catch (error) {
+    console.error("❌ Get task dependencies error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 CHECK DEPENDENCY STATUS
+// ============================================================
+const checkDependencyStatus = async (task) => {
+  if (!task || !task.dependencies || task.dependencies.length === 0) {
+    return {
+      isBlocked: false,
+      blockedBy: [],
+      allCompleted: true,
+      progress: 100,
+    };
+  }
+
+  const predecessorIds = task.dependencies.map(d => d.taskId);
+  const predecessors = await Task.find({
+    _id: { $in: predecessorIds },
+  }).lean();
+
+  const blockedBy = [];
+  let allCompleted = true;
+  let totalProgress = 0;
+
+  predecessors.forEach(pred => {
+    const isCompleted = pred.status === "completed" || pred.status === "done";
+    if (!isCompleted) {
+      blockedBy.push({
+        _id: pred._id,
+        title: pred.title,
+        status: pred.status,
+        deadline: pred.deadline,
+      });
+      allCompleted = false;
+    }
+    totalProgress += pred.progress || 0;
+  });
+
+  const avgProgress = predecessors.length > 0
+    ? Math.round(totalProgress / predecessors.length)
+    : 100;
+
+  return {
+    isBlocked: blockedBy.length > 0,
+    blockedBy: blockedBy,
+    allCompleted: allCompleted,
+    progress: avgProgress,
+    totalPredecessors: predecessors.length,
+    completedPredecessors: predecessors.length - blockedBy.length,
+  };
+};
+
+// ============================================================
+// 🆕 GET PROJECT DEPENDENCY GRAPH
+// ============================================================
+const getProjectDependencyGraph = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const user = req.user;
+
+    console.log("🔗 getProjectDependencyGraph called:", { projectId });
+
+    // Check project access
+    const project = await Project.findById(projectId).select("departmentId projectManager teamMembers").lean();
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isDeptManager = user.role === "dept_manager" && user.departmentId?.toString() === project.departmentId?.toString();
+    const isProjectManager = project.projectManager?.toString() === user._id.toString();
+
+    if (!isAdmin && !isDeptManager && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to view project dependencies",
+      });
+    }
+
+    // Get all tasks with dependencies
+    const tasks = await Task.find({ projectId })
+      .select("_id title status deadline priority dependencies")
+      .lean();
+
+    // Build dependency graph
+    const graph = {
+      nodes: tasks.map(task => ({
+        id: task._id,
+        title: task.title,
+        status: task.status,
+        deadline: task.deadline,
+        priority: task.priority,
+        hasDependencies: task.dependencies && task.dependencies.length > 0,
+        dependencyCount: task.dependencies?.length || 0,
+      })),
+      edges: [],
+    };
+
+    tasks.forEach(task => {
+      if (task.dependencies && task.dependencies.length > 0) {
+        task.dependencies.forEach(dep => {
+          graph.edges.push({
+            from: dep.taskId,
+            to: task._id,
+            type: dep.type || "FS",
+            lag: dep.lag || 0,
+          });
+        });
+      }
+    });
+
+    // Detect circular dependencies in graph
+    const circularDependencies = await detectCircularDependenciesInGraph(graph);
+
+    res.json({
+      success: true,
+      data: {
+        graph,
+        stats: {
+          totalNodes: graph.nodes.length,
+          totalEdges: graph.edges.length,
+          hasCircularDependencies: circularDependencies.length > 0,
+          circularDependencies: circularDependencies,
+        },
+      },
+    });
+
+  } catch (error) {
+    console.error("❌ Get project dependency graph error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 DETECT CIRCULAR DEPENDENCIES IN GRAPH
+// ============================================================
+const detectCircularDependenciesInGraph = async (graph) => {
+  const visited = new Set();
+  const recursionStack = new Set();
+  const cycles = [];
+
+  const buildAdjacencyList = () => {
+    const adj = {};
+    graph.edges.forEach(edge => {
+      if (!adj[edge.from]) adj[edge.from] = [];
+      adj[edge.from].push(edge.to);
+    });
+    return adj;
+  };
+
+  const adj = buildAdjacencyList();
+
+  const dfs = (node, path = []) => {
+    if (recursionStack.has(node)) {
+      const cycleStart = path.indexOf(node);
+      const cycle = path.slice(cycleStart).concat(node);
+      cycles.push(cycle);
+      return;
+    }
+
+    if (visited.has(node)) return;
+
+    visited.add(node);
+    recursionStack.add(node);
+    path.push(node);
+
+    const neighbors = adj[node] || [];
+    for (const neighbor of neighbors) {
+      dfs(neighbor, path);
+    }
+
+    recursionStack.delete(node);
+    path.pop();
+  };
+
+  const nodes = graph.nodes.map(n => n.id);
+  for (const node of nodes) {
+    if (!visited.has(node)) {
+      dfs(node);
+    }
+  }
+
+  return cycles;
+};
+
+// ============================================================
+// 🆕 BULK ADD DEPENDENCIES
+// ============================================================
+const bulkAddDependencies = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dependencies } = req.body;
+    const user = req.user;
+
+    if (!dependencies || !Array.isArray(dependencies) || dependencies.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Dependencies array is required",
+      });
+    }
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check permission
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+    const isProjectManager = user.role === "project_manager" && task.departmentId?.toString() === user.departmentId?.toString();
+
+    if (!isAdmin && !isAssignee && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to add dependencies to this task",
+      });
+    }
+
+    // Validate each dependency
+    const validationErrors = [];
+    const validDependencies = [];
+
+    for (const dep of dependencies) {
+      if (!dep.taskId) {
+        validationErrors.push("Each dependency must have a taskId");
+        continue;
+      }
+
+      // Check if dependency already exists
+      const existing = task.dependencies?.find(
+        (d) => d.taskId.toString() === dep.taskId
+      );
+
+      if (existing) {
+        validationErrors.push(`Dependency ${dep.taskId} already exists`);
+        continue;
+      }
+
+      // Check if dep task exists
+      const depTask = await Task.findById(dep.taskId);
+      if (!depTask) {
+        validationErrors.push(`Task ${dep.taskId} not found`);
+        continue;
+      }
+
+      validDependencies.push({
+        taskId: dep.taskId,
+        type: dep.type || "FS",
+        lag: dep.lag || 0,
+        addedAt: new Date(),
+      });
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errors: validationErrors,
+      });
+    }
+
+    // Check for circular dependencies
+    const allDependencies = [...(task.dependencies || []), ...validDependencies];
+    const circular = await task.checkCircularDependencies(id, allDependencies);
+
+    if (circular) {
+      return res.status(400).json({
+        success: false,
+        message: `Circular dependency detected: ${circular}`,
+      });
+    }
+
+    // Add all dependencies
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      {
+        $push: {
+          dependencies: { $each: validDependencies },
+        },
+        $addToSet: {
+          dependents: { $each: validDependencies.map(d => d.taskId) },
+        },
+      },
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .lean();
+
+    // Update dependents arrays
+    for (const dep of validDependencies) {
+      await Task.findByIdAndUpdate(dep.taskId, {
+        $addToSet: {
+          dependents: id,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `${validDependencies.length} dependencies added successfully`,
+      data: updatedTask,
+    });
+
+  } catch (error) {
+    console.error("❌ Bulk add dependencies error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 GET DEPENDENCY CHAIN FOR TASK
+// ============================================================
+const getDependencyChain = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    const task = await Task.findById(id).lean();
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check permission
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+
+    if (!isAdmin && !isAssignee) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to view dependency chain",
+      });
+    }
+
+    const chain = await Task.getDependencyChain(id);
+
+    res.json({
+      success: true,
+      data: chain,
+    });
+
+  } catch (error) {
+    console.error("❌ Get dependency chain error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 UPDATE DEPENDENCY TYPE
+// ============================================================
+const updateDependencyType = async (req, res) => {
+  try {
+    const { id, dependencyId } = req.params;
+    const { type, lag } = req.body;
+    const user = req.user;
+
+    if (!type && lag === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Type or lag is required",
+      });
+    }
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Check permission
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+    const isProjectManager = user.role === "project_manager" && task.departmentId?.toString() === user.departmentId?.toString();
+
+    if (!isAdmin && !isAssignee && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to update dependencies",
+      });
+    }
+
+    // Check if dependency exists
+    const dependencyIndex = task.dependencies?.findIndex(
+      (d) => d.taskId.toString() === dependencyId
+    );
+
+    if (dependencyIndex === -1 || dependencyIndex === undefined) {
+      return res.status(404).json({
+        success: false,
+        message: "Dependency not found",
+      });
+    }
+
+    // Update dependency
+    const updateQuery = {};
+    if (type) updateQuery[`dependencies.${dependencyIndex}.type`] = type;
+    if (lag !== undefined) updateQuery[`dependencies.${dependencyIndex}.lag`] = lag;
+
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      { $set: updateQuery },
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .lean();
+
+    res.json({
+      success: true,
+      message: "Dependency updated successfully",
+      data: updatedTask,
+    });
+
+  } catch (error) {
+    console.error("❌ Update dependency error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
+// 🆕 GET DEPENDENCY STATISTICS
+// ============================================================
+const getDependencyStatistics = async (req, res) => {
+  try {
+    const user = req.user;
+
+    let query = {};
+
+    // Role-based filtering
+    if (user.role === "employee") {
+      query.assignedTo = user._id;
+    } else if (user.role === "line_manager") {
+      const teamMembers = await User.find({ managerId: user._id }).select("_id").lean();
+      query.assignedTo = { $in: [...teamMembers.map((m) => m._id), user._id] };
+    } else if (user.role === "dept_manager" || user.role === "project_manager") {
+      query.departmentId = user.departmentId;
+    }
+
+    // Get all tasks with dependencies
+    const tasks = await Task.find(query)
+      .select("_id title status dependencies dependents")
+      .lean();
+
+    const stats = {
+      totalTasks: tasks.length,
+      tasksWithDependencies: tasks.filter(t => t.dependencies && t.dependencies.length > 0).length,
+      totalDependencies: tasks.reduce((sum, t) => sum + (t.dependencies?.length || 0), 0),
+      maxDependencies: Math.max(...tasks.map(t => t.dependencies?.length || 0), 0),
+      avgDependencies: tasks.length > 0
+        ? (tasks.reduce((sum, t) => sum + (t.dependencies?.length || 0), 0) / tasks.length).toFixed(2)
+        : 0,
+      dependencyTypes: {},
+      blockedTasks: [],
+    };
+
+    // Count dependency types
+    tasks.forEach(task => {
+      if (task.dependencies) {
+        task.dependencies.forEach(dep => {
+          stats.dependencyTypes[dep.type] = (stats.dependencyTypes[dep.type] || 0) + 1;
+        });
+      }
+    });
+
+    // Find blocked tasks
+    for (const task of tasks) {
+      if (task.dependencies && task.dependencies.length > 0) {
+        const status = await checkDependencyStatus(task);
+        if (status.isBlocked) {
+          stats.blockedTasks.push({
+            _id: task._id,
+            title: task.title,
+            blockedBy: status.blockedBy,
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+
+  } catch (error) {
+    console.error("❌ Get dependency statistics error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
 // ============================================================
 // EXPORT ALL CONTROLLERS
 // ============================================================
@@ -2758,8 +3672,16 @@ module.exports = {
   resumeTaskTimer,
   completeTask,
   updateTaskTime,
-  // 🆕 NEW MILESTONE & SUB-TASK FUNCTIONS
   getSubTasks,
   getMilestones,
   getTaskHierarchy,
+  addDependency,
+  removeDependency,
+  getTaskDependencies,
+  checkDependencyStatus,
+  getProjectDependencyGraph,
+  bulkAddDependencies,
+  getDependencyChain,
+  updateDependencyType,
+  getDependencyStatistics,
 };
