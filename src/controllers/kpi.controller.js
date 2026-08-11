@@ -689,6 +689,9 @@ const getMonthlyKPIReport = async (req, res) => {
         }
       }
 
+      // 🔥 FIX: Filter out scores with null userId before processing
+      const validScores = kpiScores.filter(score => score.userId !== null && score.userId !== undefined);
+
       // Calculate distribution
       const distribution = {
         excellent: 0,
@@ -697,24 +700,26 @@ const getMonthlyKPIReport = async (req, res) => {
         needs_improvement: 0,
       };
 
-      kpiScores.forEach((score) => {
+      validScores.forEach((score) => {
         if (score.performanceLevel === "excellent") distribution.excellent++;
         else if (score.performanceLevel === "good") distribution.good++;
         else if (score.performanceLevel === "average") distribution.average++;
         else if (score.performanceLevel === "needs_improvement") distribution.needs_improvement++;
       });
 
-      // Calculate department averages
+      // Calculate department averages with null checks
       const deptMap = new Map();
-      kpiScores.forEach((score) => {
+      validScores.forEach((score) => {
         if (!score.departmentId) return;
+        if (!score.userId) return; // 🔥 Skip if userId is null
+        
         const deptId = score.departmentId._id.toString();
         if (!deptMap.has(deptId)) {
           deptMap.set(deptId, {
             department: score.departmentId,
             total: 0,
             count: 0,
-            topPerformer: score.userId.fullName,
+            topPerformer: score.userId.fullName || "Unknown",
             topScore: score.totalScore
           });
         }
@@ -723,7 +728,7 @@ const getMonthlyKPIReport = async (req, res) => {
         dept.count++;
         if (score.totalScore > dept.topScore) {
           dept.topScore = score.totalScore;
-          dept.topPerformer = score.userId.fullName;
+          dept.topPerformer = score.userId?.fullName || "Unknown";
         }
       });
 
@@ -731,15 +736,15 @@ const getMonthlyKPIReport = async (req, res) => {
         department: data.department,
         averageScore: Math.round(data.total / data.count),
         employeeCount: data.count,
-        topPerformer: data.topPerformer
+        topPerformer: data.topPerformer || "Unknown"
       }));
 
-      // Get top performers
-      const topPerformers = kpiScores
+      // Get top performers with null checks
+      const topPerformers = validScores
         .sort((a, b) => b.totalScore - a.totalScore)
         .slice(0, 5)
         .map((score) => ({
-          name: score.userId.fullName,
+          name: score.userId?.fullName || "Deleted User",
           department: score.departmentId?.name || "Unknown",
           score: score.totalScore,
           level: score.performanceLevel
@@ -750,14 +755,14 @@ const getMonthlyKPIReport = async (req, res) => {
         data: {
           month: monthStr,
           year: yearNum,
-          totalEmployees: kpiScores.length,
-          overallAverage: kpiScores.length > 0
-            ? Math.round(kpiScores.reduce((sum, s) => sum + s.totalScore, 0) / kpiScores.length)
+          totalEmployees: validScores.length,
+          overallAverage: validScores.length > 0
+            ? Math.round(validScores.reduce((sum, s) => sum + s.totalScore, 0) / validScores.length)
             : 0,
           distribution,
           departmentAverages,
           topPerformers,
-          allScores: kpiScores,
+          allScores: validScores,
         },
       });
     }
@@ -820,6 +825,9 @@ const getMonthlyKPIReport = async (req, res) => {
       }
     }
 
+    // 🔥 FIX: Filter out scores with null userId before processing
+    const validScores = kpiScores.filter(score => score.userId !== null && score.userId !== undefined);
+
     // Calculate distribution
     const distribution = {
       excellent: 0,
@@ -828,24 +836,26 @@ const getMonthlyKPIReport = async (req, res) => {
       needs_improvement: 0,
     };
 
-    kpiScores.forEach((score) => {
+    validScores.forEach((score) => {
       if (score.performanceLevel === "excellent") distribution.excellent++;
       else if (score.performanceLevel === "good") distribution.good++;
       else if (score.performanceLevel === "average") distribution.average++;
       else if (score.performanceLevel === "needs_improvement") distribution.needs_improvement++;
     });
 
-    // Calculate department averages
+    // Calculate department averages with null checks
     const deptMap = new Map();
-    kpiScores.forEach((score) => {
+    validScores.forEach((score) => {
       if (!score.departmentId) return;
+      if (!score.userId) return; // 🔥 Skip if userId is null
+      
       const deptId = score.departmentId._id.toString();
       if (!deptMap.has(deptId)) {
         deptMap.set(deptId, {
           department: score.departmentId,
           total: 0,
           count: 0,
-          topPerformer: score.userId.fullName,
+          topPerformer: score.userId?.fullName || "Unknown",
           topScore: score.totalScore
         });
       }
@@ -854,7 +864,7 @@ const getMonthlyKPIReport = async (req, res) => {
       dept.count++;
       if (score.totalScore > dept.topScore) {
         dept.topScore = score.totalScore;
-        dept.topPerformer = score.userId.fullName;
+        dept.topPerformer = score.userId?.fullName || "Unknown";
       }
     });
 
@@ -862,15 +872,15 @@ const getMonthlyKPIReport = async (req, res) => {
       department: data.department,
       averageScore: Math.round(data.total / data.count),
       employeeCount: data.count,
-      topPerformer: data.topPerformer
+      topPerformer: data.topPerformer || "Unknown"
     }));
 
-    // Get top performers
-    const topPerformers = kpiScores
+    // Get top performers with null checks
+    const topPerformers = validScores
       .sort((a, b) => b.totalScore - a.totalScore)
       .slice(0, 5)
       .map((score) => ({
-        name: score.userId.fullName,
+        name: score.userId?.fullName || "Deleted User",
         department: score.departmentId?.name || "Unknown",
         score: score.totalScore,
         level: score.performanceLevel
@@ -881,17 +891,18 @@ const getMonthlyKPIReport = async (req, res) => {
       data: {
         month: monthStr,
         year: yearNum,
-        totalEmployees: kpiScores.length,
-        overallAverage: kpiScores.length > 0
-          ? Math.round(kpiScores.reduce((sum, s) => sum + s.totalScore, 0) / kpiScores.length)
+        totalEmployees: validScores.length,
+        overallAverage: validScores.length > 0
+          ? Math.round(validScores.reduce((sum, s) => sum + s.totalScore, 0) / validScores.length)
           : 0,
         distribution,
         departmentAverages,
         topPerformers,
-        allScores: kpiScores,
+        allScores: validScores,
         _debug: {
           query: query,
           totalFound: kpiScores.length,
+          validScores: validScores.length,
           departmentFilter: departmentId || "none"
         }
       },
@@ -905,6 +916,36 @@ const getMonthlyKPIReport = async (req, res) => {
   }
 };
 
+// Add this function to clean up orphaned KPI records
+const cleanupOrphanedKPIScores = async () => {
+  try {
+    console.log("🧹 Cleaning up orphaned KPI scores...");
+    
+    // Find all KPI scores
+    const allScores = await KPIScore.find({});
+    let deletedCount = 0;
+    
+    for (const score of allScores) {
+      // Check if user exists
+      const userExists = await User.findById(score.userId);
+      
+      if (!userExists) {
+        console.log(`🗑️ Deleting orphaned KPI score: ${score._id} (userId: ${score.userId})`);
+        await KPIScore.deleteOne({ _id: score._id });
+        deletedCount++;
+      }
+    }
+    
+    console.log(`✅ Cleanup complete. Deleted ${deletedCount} orphaned KPI scores.`);
+    return deletedCount;
+  } catch (error) {
+    console.error("Error cleaning up orphaned KPI scores:", error);
+    throw error;
+  }
+};
+
+// Call this once to clean up
+// await cleanupOrphanedKPIScores();
 // Get KPI trend for an employee
 const getKPITrend = async (req, res) => {
   try {
