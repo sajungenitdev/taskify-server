@@ -38,6 +38,7 @@ const {
   getDependencyChain,
   updateDependencyType,
   getDependencyStatistics,
+  reorderSingleTask
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -412,6 +413,16 @@ router.patch(
   updateTaskTime
 );
 
+router.patch(
+  "/:id/reorder",
+  authenticate,
+  [
+    body("order").isNumeric().withMessage("Order must be a number"),
+    body("status").optional().isString().withMessage("Status must be a string"),
+  ],
+  reorderSingleTask,
+);
+
 // ============================================================
 // COMMENT ROUTES
 // ============================================================
@@ -457,5 +468,7 @@ router.delete(
   requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "line_manager"),
   deleteTask
 );
+
+
 
 module.exports = router;

@@ -174,6 +174,7 @@ const systemStatusRoutes = require("./src/routes/systemStatus.routes");
 const { authenticate, requireRole } = require("./src/middleware/auth.middleware");
 const pricingPlanRoutes = require("./src/routes/pricingPlan.routes");
 const timerRoutes = require("./src/routes/timer.routes");
+const feedbackRoutes = require("./src/routes/feedback.routes");
 
 
 
@@ -205,7 +206,7 @@ app.use("/api/v1/system", systemStatusRoutes);
 app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/pricing-plans", pricingPlanRoutes);
 app.use("/api/v1/timer", timerRoutes);
-
+app.use("/api/v1/feedback", feedbackRoutes);
 
 
 // ==================== HEALTH CHECK ====================

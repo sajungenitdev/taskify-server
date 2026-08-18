@@ -3643,6 +3643,66 @@ const getDependencyStatistics = async (req, res) => {
   }
 };
 
+const reorderSingleTask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { order, status } = req.body;
+
+    if (order === undefined && !status) {
+      return res.status(400).json({
+        success: false,
+        message: "Order or status is required",
+      });
+    }
+
+    const task = await Task.findById(id);
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found",
+      });
+    }
+
+    // Permission check
+    const user = req.user;
+    const isAdmin = ["admin", "super_admin", "hr_manager"].includes(user.role);
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+    const isProjectManager = user.role === "project_manager" && task.departmentId?.toString() === user.departmentId?.toString();
+
+    if (!isAdmin && !isAssignee && !isProjectManager) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to reorder this task",
+      });
+    }
+
+    const updateData = {};
+    if (order !== undefined) updateData.order = order;
+    if (status) updateData.status = status;
+
+    const updatedTask = await Task.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true }
+    )
+      .populate("assignedTo", "fullName email")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .lean();
+
+    res.json({
+      success: true,
+      message: "Task reordered successfully",
+      data: updatedTask,
+    });
+  } catch (error) {
+    console.error("❌ Reorder single task error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
 // ============================================================
 // EXPORT ALL CONTROLLERS
 // ============================================================
@@ -3684,4 +3744,5 @@ module.exports = {
   getDependencyChain,
   updateDependencyType,
   getDependencyStatistics,
+  reorderSingleTask
 };

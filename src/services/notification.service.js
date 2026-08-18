@@ -499,7 +499,141 @@ class NotificationService {
       console.error("Error in overdue check:", error);
     }
   }
+  static async sendFeedbackNotification(feedbackId, adminId, userName, category, subject) {
+    try {
+      const categoryLabels = {
+        bug: "🐛 Bug Report",
+        feature: "✨ Feature Request",
+        improvement: "📈 Improvement",
+        praise: "🌟 Praise",
+        general: "📝 General",
+        issue: "⚠️ Issue",
+      };
+
+      const categoryLabel = categoryLabels[category] || category;
+
+      await createNotification({
+        userId: adminId,
+        title: "📝 New Feedback Received",
+        message: `${userName} submitted ${categoryLabel}: "${subject.substring(0, 80)}${subject.length > 80 ? '...' : ''}"`,
+        type: "info",
+        category: "feedback",
+        feedbackId: feedbackId,
+        actionUrl: `/feedback/${feedbackId}`,
+        metadata: {
+          userName,
+          category,
+          subject,
+          feedbackId,
+        },
+      });
+
+      console.log(`✅ Feedback notification sent to admin: ${adminId}`);
+      return true;
+    } catch (error) {
+      console.error("Failed to send feedback notification:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Send notification to user about feedback status update
+   */
+  static async sendFeedbackStatusUpdate(feedbackId, userId, oldStatus, newStatus) {
+    try {
+      await createNotification({
+        userId,
+        title: "📋 Feedback Status Updated",
+        message: `Your feedback status has been updated from "${oldStatus}" to "${newStatus}"`,
+        type: "info",
+        category: "feedback",
+        feedbackId: feedbackId,
+        actionUrl: `/feedback`,
+        metadata: {
+          oldStatus,
+          newStatus,
+          feedbackId,
+        },
+      });
+
+      console.log(`✅ Status update notification sent to user: ${userId}`);
+      return true;
+    } catch (error) {
+      console.error("Failed to send status update notification:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Send notification to user about admin reply to feedback
+   */
+  static async sendFeedbackReply(feedbackId, userId, adminName, message) {
+    try {
+      const shortMessage = message.substring(0, 100);
+      const truncated = message.length > 100 ? '...' : '';
+
+      await createNotification({
+        userId,
+        title: "💬 New Reply to Your Feedback",
+        message: `${adminName} replied to your feedback: "${shortMessage}${truncated}"`,
+        type: "info",
+        category: "feedback",
+        feedbackId: feedbackId,
+        actionUrl: `/feedback`,
+        metadata: {
+          adminName,
+          message,
+          feedbackId,
+        },
+      });
+
+      console.log(`✅ Reply notification sent to user: ${userId}`);
+      return true;
+    } catch (error) {
+      console.error("Failed to send reply notification:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Send notification to admins about high priority feedback
+   */
+  static async sendFeedbackAlert(feedbackId, adminId, userName, priority, subject) {
+    try {
+      const priorityEmojis = {
+        low: "🟢",
+        medium: "🟡",
+        high: "🟠",
+        critical: "🔴",
+      };
+
+      const emoji = priorityEmojis[priority] || "📝";
+
+      await createNotification({
+        userId: adminId,
+        title: `${emoji} ${priority.toUpperCase()} Priority Feedback`,
+        message: `${userName} submitted ${priority} priority feedback: "${subject.substring(0, 60)}${subject.length > 60 ? '...' : ''}"`,
+        type: priority === "critical" || priority === "high" ? "warning" : "info",
+        category: "feedback",
+        feedbackId: feedbackId,
+        actionUrl: `/feedback/${feedbackId}`,
+        metadata: {
+          userName,
+          priority,
+          subject,
+          feedbackId,
+        },
+      });
+
+      console.log(`✅ Alert notification sent to admin: ${adminId}`);
+      return true;
+    } catch (error) {
+      console.error("Failed to send feedback alert:", error);
+      return false;
+    }
+  }
 }
+
 
 // Scheduled jobs
 const startScheduledJobs = () => {
