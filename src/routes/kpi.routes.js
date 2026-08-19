@@ -14,6 +14,13 @@ const {
   getDepartmentKPI,
   getKPILeaderboard,
   getKPIStatistics,
+  checkKPILockStatus,
+  unlockKPI,
+  deleteKPIFeedback,
+  updateKPIFeedback,
+  addKPIFeedback,
+  getKPIFeedback,
+  lockKPI,
 } = require("../controllers/kpi.controller");
 
 const router = express.Router();
@@ -30,7 +37,7 @@ router.use(authenticate);
 // GET all KPI weights (no params) - MUST come FIRST
 router.get(
   "/weights",
-  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager"),
   getAllKPIWeights
 );
 
@@ -97,7 +104,7 @@ router.get(
 // GET KPI leaderboard for all departments (admin only)
 router.get(
   "/leaderboard",
-  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager"),
   getKPILeaderboard
 );
 
@@ -115,7 +122,7 @@ router.get(
 // GET KPI statistics for all departments (admin only)
 router.get(
   "/statistics",
-  requireRole("admin", "super_admin", "hr_manager","employee", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager"),
   getKPIStatistics
 );
 
@@ -148,5 +155,60 @@ router.get(
   requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getEmployeeKPI
 );
+
+
+// ============================================================
+// KPI FEEDBACK ROUTES - Add to your kpi.routes.js
+// ============================================================
+
+// GET all feedback for a KPI
+router.get(
+  "/feedback/:kpiId",
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  getKPIFeedback
+);
+
+// POST add feedback to a KPI
+router.post(
+  "/feedback/:kpiId",
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  addKPIFeedback
+);
+
+// PUT update feedback
+router.put(
+  "/feedback/:kpiId/:feedbackId",
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  updateKPIFeedback
+);
+
+// DELETE feedback
+router.delete(
+  "/feedback/:kpiId/:feedbackId",
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  deleteKPIFeedback
+);
+
+// GET check if KPI is locked
+router.get(
+  "/lock-status/:userId",
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  checkKPILockStatus
+);
+
+// POST lock KPI (Admin only)
+router.post(
+  "/lock/:userId",
+  requireRole("admin", "super_admin"),
+  lockKPI
+);
+
+// POST unlock KPI (Admin only)
+router.post(
+  "/unlock/:userId",
+  requireRole("admin", "super_admin"),
+  unlockKPI
+);
+
 
 module.exports = router;
