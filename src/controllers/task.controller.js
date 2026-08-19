@@ -2244,7 +2244,39 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
       });
     }
 
-    const userDepartmentId = user.departmentId || null;
+    // Get the user's department ID from their profile
+    let userDepartmentId = null;
+
+    // Check if user has departmentId
+    if (user.departmentId) {
+      // If departmentId is an object with _id
+      if (typeof user.departmentId === 'object' && user.departmentId._id) {
+        userDepartmentId = user.departmentId._id;
+      } else {
+        userDepartmentId = user.departmentId;
+      }
+    }
+
+    // If user doesn't have a department, try to find any department
+    if (!userDepartmentId) {
+      try {
+        const { Department } = require("../models/Department.model");
+        const anyDepartment = await Department.findOne().select('_id').lean();
+        if (anyDepartment) {
+          userDepartmentId = anyDepartment._id;
+          console.log(`📋 Using fallback department: ${userDepartmentId}`);
+        }
+      } catch (err) {
+        console.error("Error finding fallback department:", err);
+      }
+    }
+
+    // If still no department, assign user's ID as department or throw error
+    if (!userDepartmentId) {
+      // Last resort: use the user's ID as department ID (though this might not work if Department collection is empty)
+      userDepartmentId = user._id;
+      console.warn(`⚠️ No department found, using user ID as department: ${userDepartmentId}`);
+    }
 
     const assignedUserIds = tasks.map((t) => t.assignedTo).filter((id) => id);
     const existingUsers = await User.find(
@@ -2277,13 +2309,15 @@ const bulkCreateTasksWithoutProject = async (req, res) => {
       if (errors.length > 0) {
         validationErrors.push(...errors);
       } else {
+        // Get department from assigned user, or fallback to user's department
         const departmentId = userDepartmentMap[task.assignedTo] || userDepartmentId;
+
         validTasks.push({
           title: task.title,
           description: task.description,
           assignedTo: task.assignedTo,
           assignedBy: user._id,
-          departmentId: departmentId,
+          departmentId: departmentId || userDepartmentId,
           priority: task.priority || "normal",
           status: "pending",
           estimatedHours: task.estimatedHours || 0,

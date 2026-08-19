@@ -25,11 +25,9 @@ const {
   pauseTaskTimer,
   startTaskTimer,
   updateTaskTime,
-  // 🆕 Milestone & Sub-task Controllers
   getSubTasks,
   getMilestones,
   getTaskHierarchy,
-  // 🆕 Dependency Controllers
   addDependency,
   removeDependency,
   getTaskDependencies,
