@@ -104,7 +104,7 @@ router.get(
 // GET KPI leaderboard for all departments (admin only)
 router.get(
   "/leaderboard",
-  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager", "employee"),
   getKPILeaderboard
 );
 
@@ -122,7 +122,7 @@ router.get(
 // GET KPI statistics for all departments (admin only)
 router.get(
   "/statistics",
-  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "employee", "dept_manager", "project_manager", "employee"),
   getKPIStatistics
 );
 
@@ -164,35 +164,35 @@ router.get(
 // GET all feedback for a KPI
 router.get(
   "/feedback/:kpiId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   getKPIFeedback
 );
 
 // POST add feedback to a KPI
 router.post(
   "/feedback/:kpiId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   addKPIFeedback
 );
 
 // PUT update feedback
 router.put(
   "/feedback/:kpiId/:feedbackId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   updateKPIFeedback
 );
 
 // DELETE feedback
 router.delete(
   "/feedback/:kpiId/:feedbackId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   deleteKPIFeedback
 );
 
 // GET check if KPI is locked
 router.get(
   "/lock-status/:userId",
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager"),
+  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "employee"),
   checkKPILockStatus
 );
 
