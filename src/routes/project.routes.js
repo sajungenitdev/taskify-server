@@ -26,11 +26,46 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 
+// In your project routes
+router.get("/my", authenticate, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Find projects where user is a team member, manager, or creator
+    const projects = await Project.find({
+      $or: [
+        { "teamMembers.userId": userId },
+        { managerId: userId },
+        { createdBy: userId }
+      ],
+      isActive: true,
+      status: { $ne: "archived" }
+    })
+      .populate("departmentId", "name code")
+      .populate("managerId", "fullName email role")
+      .populate("createdBy", "fullName email")
+      .populate("teamMembers.userId", "fullName email")
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: projects,
+      count: projects.length
+    });
+  } catch (error) {
+    console.error("Error fetching user projects:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch projects"
+    });
+  }
+});
 // Project routes
 router.get("/", getProjects);
 router.get("/templates", getProjectTemplates);
 router.get("/resources", getProjectResources);
 router.get("/:id", getProjectById);
+
 
 // Create and update
 router.post("/", createProject);
@@ -56,5 +91,6 @@ router.get("/:id/contributors", getProjectContributors);
 // Team management routes
 router.post("/:id/team/add", addTeamMembers);
 router.post("/:id/team/remove", removeTeamMembers);
+
 
 module.exports = router;
