@@ -20,6 +20,7 @@ const {
   addTeamMembers,
   removeTeamMembers,
 } = require("../controllers/project.controller");
+const { Project } = require("../models/Project.model");
 
 const router = express.Router();
 
