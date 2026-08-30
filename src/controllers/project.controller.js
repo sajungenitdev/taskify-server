@@ -9,9 +9,19 @@ const getProjects = async (req, res) => {
   try {
     const { status, priority, departmentId, managerId, search } = req.query;
 
-    // Build filter - ADD isActive: true to only show active projects
-    const filter = { isActive: true };
-    if (status) filter.status = status;
+    // Build filter
+    const filter = {};
+
+    // 🔥 FIX: Only filter by isActive if NOT requesting archived
+    if (status === 'archived') {
+      // Show archived projects regardless of isActive
+      filter.status = 'archived';
+    } else {
+      // For non-archived, only show active projects
+      filter.isActive = true;
+      if (status) filter.status = status;
+    }
+
     if (priority) filter.priority = priority;
     if (departmentId) filter.departmentId = departmentId;
     if (managerId) filter.managerId = managerId;
@@ -236,23 +246,20 @@ const updateProjectProgress = async (req, res) => {
 // ============================================================
 // ARCHIVE PROJECT
 // ============================================================
+// ============================================================
+// ARCHIVE PROJECT - FIXED
+// ============================================================
 const archiveProject = async (req, res) => {
   try {
-    const { id } = req.params;
-    const user = req.user;
+    const projectId = req.params.id;
 
-    const project = await Project.findById(id);
+    // Get the project
+    const project = await Project.findById(projectId);
+
     if (!project) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Project not found" });
-    }
-
-    // Can't archive completed or cancelled projects
-    if (project.status === "completed" || project.status === "cancelled") {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
-        message: "Completed or cancelled projects cannot be archived",
+        message: "Project not found"
       });
     }
 
@@ -260,29 +267,67 @@ const archiveProject = async (req, res) => {
     if (project.status === "archived") {
       return res.status(400).json({
         success: false,
-        message: "Project is already archived",
+        message: "Project is already archived"
       });
     }
 
-    project.status = "archived";
-    project.archivedAt = new Date();
-    project.archivedBy = user._id;
-    await project.save();
+    // 🔥 CRITICAL: Prepare update data - DO NOT set isActive to false
+    const updateData = {
+      status: "archived",
+      archivedAt: new Date(),
+      archivedBy: req.user._id,
+      // 🔥 IMPORTANT: Keep isActive as true so it can be found
+      isActive: true
+    };
 
-    const populatedProject = await Project.findById(project._id)
-      .populate("departmentId", "name code")
-      .populate("managerId", "fullName email")
-      .populate("createdBy", "fullName email")
-      .populate("archivedBy", "fullName email");
+    // Ensure budget is an object
+    if (project.budget === undefined || project.budget === null) {
+      updateData.budget = { allocated: 0, spent: 0, currency: "USD" };
+    } else if (typeof project.budget === 'number') {
+      updateData.budget = {
+        allocated: project.budget || 0,
+        spent: 0,
+        currency: "USD"
+      };
+    } else if (typeof project.budget === 'object' && project.budget !== null) {
+      updateData.budget = {
+        allocated: project.budget.allocated || 0,
+        spent: project.budget.spent || 0,
+        currency: project.budget.currency || "USD"
+      };
+    }
 
-    res.json({
+    // Use $set to update the document
+    const updatedProject = await Project.findByIdAndUpdate(
+      projectId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    )
+      .populate('managerId', 'fullName email role')
+      .populate('departmentId', 'name code')
+      .populate('createdBy', 'fullName email')
+      .populate('teamMembers.userId', 'fullName email role')
+      .populate('archivedBy', 'fullName email');
+
+    if (!updatedProject) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found after update"
+      });
+    }
+
+    return res.status(200).json({
       success: true,
       message: "Project archived successfully",
-      data: populatedProject,
+      data: updatedProject
     });
+
   } catch (error) {
-    console.error("Archive project error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Error archiving project:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to archive project"
+    });
   }
 };
 
