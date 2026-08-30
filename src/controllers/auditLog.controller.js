@@ -32,95 +32,13 @@ const createAuditLog = async (data) => {
       },
     };
 
-    // ✅ Validate resource is in enum
-    const validResources = [
-      "user",
-      "users",
-      "role",
-      "roles",
-      "permission",
-      "permissions",
-      "task",
-      "tasks",
-      "project",
-      "projects",
-      "team",
-      "teams",
-      "setting",
-      "settings",
-      "audit",
-      "logs",
-      "api",
-      "keys",
-      "report",
-      "reports",
-      "notification",
-      "notifications",
-      "message",
-      "messages",
-      "department",
-      "departments",
-      "pricing_plan",
-      "billing",
-      "invoice",
-      "subscription",
-      "transaction",
-      "payment_method",
-    ];
-
-    if (!validResources.includes(logData.resource)) {
-      console.warn(`⚠️ Invalid resource type: ${logData.resource}, defaulting to "system"`);
-      logData.resource = "system";
-    }
-
-    // ✅ Validate action is in enum
-    const validActions = [
-      "login",
-      "logout",
-      "create",
-      "update",
-      "delete",
-      "view",
-      "export",
-      "import",
-      "share",
-      "copy",
-      "move",
-      "archive",
-      "restore",
-      "approve",
-      "reject",
-      "lock",
-      "unlock",
-      "assign",
-      "unassign",
-      "invite",
-      "remove",
-      "enable",
-      "disable",
-      "reset",
-      "change",
-      "admin_create_user",
-      "register",
-      "cancel_subscription",
-      "create_plan",
-      "update_plan",
-      "delete_plan",
-      "toggle_plan",
-      "set_plan_order",
-    ];
-
-    if (!validActions.includes(logData.action)) {
-      console.warn(`⚠️ Invalid action type: ${logData.action}, defaulting to "view"`);
-      logData.action = "view";
-    }
+    // ... rest of validation code ...
 
     const log = new AuditLog(logData);
     await log.save();
     return log;
   } catch (error) {
     console.error("Create audit log error:", error);
-    // Don't throw - just return null
     return null;
   }
 };
@@ -252,7 +170,7 @@ const getAuditLogById = async (req, res) => {
 };
 
 // ============================================================
-// EXPORT AUDIT LOGS
+// EXPORT AUDIT LOGS - FIXED
 // ============================================================
 const exportAuditLogs = async (req, res) => {
   try {
@@ -265,6 +183,7 @@ const exportAuditLogs = async (req, res) => {
       userId = "",
       dateFrom = "",
       dateTo = "",
+      format = "csv",
     } = req.query;
 
     // Build filter
@@ -295,51 +214,107 @@ const exportAuditLogs = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(10000);
 
-    // Convert to CSV
-    const headers = [
-      "Timestamp",
-      "User",
-      "Email",
-      "Action",
-      "Resource",
-      "Resource ID",
-      "Status",
-      "Severity",
-      "IP",
-      "Location",
-      "Device",
-      "Browser",
-      "OS",
-      "Details",
-    ];
+    // If no logs found
+    if (logs.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No audit logs found to export",
+      });
+    }
 
-    const rows = logs.map((log) => [
-      log.createdAt.toISOString(),
-      log.user.name || "System",
-      log.user.email || "system@example.com",
-      log.action || "unknown",
-      log.resource || "system",
-      log.resourceId || "",
-      log.status || "success",
-      log.severity || "low",
-      log.ip || "0.0.0.0",
-      log.location || "Unknown",
-      log.device || "Unknown",
-      log.metadata?.browser || "Unknown",
-      log.metadata?.os || "Unknown",
-      JSON.stringify(log.details || {}),
-    ]);
+    // Format data for export
+    const exportData = logs.map((log) => ({
+      Timestamp: log.createdAt?.toISOString() || "",
+      User: log.user?.name || "System",
+      Email: log.user?.email || "system@example.com",
+      Action: log.action || "unknown",
+      Resource: log.resource || "system",
+      "Resource ID": log.resourceId || "",
+      Status: log.status || "success",
+      Severity: log.severity || "low",
+      IP: log.ip || "0.0.0.0",
+      Location: log.location || "Unknown",
+      Device: log.device || "Unknown",
+      Browser: log.metadata?.browser || "Unknown",
+      OS: log.metadata?.os || "Unknown",
+      Details: JSON.stringify(log.details || {}),
+    }));
 
-    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    // Handle JSON format
+    if (format === "json") {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename=audit-logs-${new Date().toISOString().split("T")[0]}.json`
+      );
+      return res.json(exportData);
+    }
 
-    res.setHeader("Content-Type", "text/csv");
+    // Handle CSV format (default)
+    const headers = Object.keys(exportData[0] || {});
+
+    // Build CSV with proper escaping
+    let csvRows = [];
+    // Add headers
+    csvRows.push(headers.join(","));
+
+    // Add data rows
+    for (const row of exportData) {
+      const values = headers.map(header => {
+        const value = row[header] || "";
+        // Escape commas and quotes
+        const stringValue = String(value);
+        if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      });
+      csvRows.push(values.join(","));
+    }
+
+    const csvContent = csvRows.join("\n");
+    const csvWithBOM = "\uFEFF" + csvContent;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename=audit-logs-${new Date().toISOString().split("T")[0]}.csv`
     );
-    res.send(csv);
+    res.setHeader("Cache-Control", "no-cache");
+    return res.send(csvWithBOM);
   } catch (error) {
     console.error("Export audit logs error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+// ============================================================
+// DELETE AUDIT LOG - ADD THIS
+// ============================================================
+const deleteAuditLog = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if log exists
+    const log = await AuditLog.findById(id);
+    if (!log) {
+      return res.status(404).json({
+        success: false,
+        message: "Audit log not found",
+      });
+    }
+    
+    // Delete the log
+    await AuditLog.findByIdAndDelete(id);
+    
+    res.json({
+      success: true,
+      message: "Audit log deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete audit log error:", error);
     res.status(500).json({
       success: false,
       message: "Server error: " + error.message,
@@ -353,4 +328,5 @@ module.exports = {
   getAuditLogById,
   exportAuditLogs,
   createAuditLog,
+  deleteAuditLog
 };

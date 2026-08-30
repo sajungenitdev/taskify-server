@@ -748,9 +748,12 @@ const getProjectTaskReport = async (req, res) => {
 };
 
 // Export task report
+// controllers/report.controller.js
+
+// Export task report - FIXED
 const exportTaskReport = async (req, res) => {
   try {
-    const { range = "month" } = req.query;
+    const { range = "month", format = "csv", fields } = req.query;
     const startDate = getDateRange(range);
     const userId = req.user._id;
 
@@ -764,53 +767,113 @@ const exportTaskReport = async (req, res) => {
         createdAt: { $gte: startDate },
       })
         .populate("assignedTo", "fullName email")
-        .populate("projectId", "name code");
+        .populate("assignedBy", "fullName")
+        .populate("projectId", "name code")
+        .populate("departmentId", "name code")
+        .lean();
     } else {
       // For non-admins, get only their tasks
       tasks = await Task.find({
         assignedTo: userId,
         createdAt: { $gte: startDate },
-      }).populate("projectId", "name code");
+      })
+        .populate("projectId", "name code")
+        .lean();
     }
 
-    // Generate CSV
+    // Handle different formats
+    if (format === "json") {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename=tasks_report_${new Date().toISOString().split("T")[0]}.json`,
+      );
+      return res.json(tasks);
+    }
+
+    if (format === "excel") {
+      // For Excel, we'll send CSV but with .xlsx extension (client will handle)
+      // Or you can use a library like exceljs
+    }
+
+    // Generate CSV (default)
     const headers = [
       "Title",
       "Description",
       "Priority",
       "Status",
       "Assigned To",
+      "Assigned By",
       "Project",
+      "Department",
       "Deadline",
       "Estimated Hours",
+      "Actual Minutes",
       "Created At",
       "Updated At",
     ];
 
-    const rows = tasks.map((task) => [
-      `"${(task.title || "").replace(/"/g, '""')}"`,
-      `"${(task.description || "").replace(/"/g, '""')}"`,
-      task.priority || "normal",
-      task.status || "pending",
-      `"${task.assignedTo?.fullName || ""}"`,
-      `"${task.projectId?.name || ""}"`,
-      task.deadline ? new Date(task.deadline).toLocaleDateString() : "",
-      task.estimatedHours || 0,
-      task.createdAt ? new Date(task.createdAt).toLocaleDateString() : "",
-      task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : "",
-    ]);
+    // Get selected fields
+    let selectedFields = fields ? fields.split(",") : [];
+    let fieldMap = {
+      title: 0,
+      description: 1,
+      priority: 2,
+      status: 3,
+      assignedTo: 4,
+      assignedBy: 5,
+      project: 6,
+      department: 7,
+      deadline: 8,
+      estimatedHours: 9,
+      actualMinutes: 10,
+      createdAt: 11,
+      updatedAt: 12,
+    };
+
+    const rows = tasks.map((task) => {
+      const row = [
+        `"${(task.title || "").replace(/"/g, '""')}"`,
+        `"${(task.description || "").replace(/"/g, '""')}"`,
+        task.priority || "normal",
+        task.status || "pending",
+        `"${task.assignedTo?.fullName || ""}"`,
+        `"${task.assignedBy?.fullName || ""}"`,
+        `"${task.projectId?.name || ""}"`,
+        `"${task.departmentId?.name || ""}"`,
+        task.deadline ? new Date(task.deadline).toLocaleDateString() : "",
+        task.estimatedHours || 0,
+        task.actualMinutes || 0,
+        task.createdAt ? new Date(task.createdAt).toLocaleDateString() : "",
+        task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : "",
+      ];
+      return row;
+    });
+
+    // Filter columns if fields are selected
+    let finalHeaders = headers;
+    let finalRows = rows;
+
+    if (selectedFields.length > 0) {
+      const indices = selectedFields.map(f => fieldMap[f]).filter(i => i !== undefined);
+      finalHeaders = indices.map(i => headers[i]);
+      finalRows = rows.map(row => indices.map(i => row[i] || ""));
+    }
 
     const csvContent = [
-      headers.join(","),
-      ...rows.map((row) => row.join(",")),
+      finalHeaders.join(","),
+      ...finalRows.map((row) => row.join(",")),
     ].join("\n");
 
-    res.setHeader("Content-Type", "text/csv");
+    // Add BOM for UTF-8
+    const csvWithBOM = "\uFEFF" + csvContent;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename=tasks_report_${new Date().toISOString().split("T")[0]}.csv`,
     );
-    res.send(csvContent);
+    res.send(csvWithBOM);
   } catch (error) {
     console.error("Error exporting task report:", error);
     res.status(500).json({

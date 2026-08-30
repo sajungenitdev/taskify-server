@@ -6,6 +6,7 @@ const {
   getAuditLogStats,
   getAuditLogById,
   exportAuditLogs,
+  deleteAuditLog,
 } = require("../controllers/auditLog.controller");
 
 const router = express.Router();
@@ -24,5 +25,8 @@ router.get("/export", requireRole("super_admin", "admin"), exportAuditLogs);
 
 // Get audit log by ID
 router.get("/:id", requireRole("super_admin", "admin"), getAuditLogById);
+
+// Delete audit log
+router.delete("/:id", requireRole("super_admin", "admin"), deleteAuditLog);
 
 module.exports = router;
