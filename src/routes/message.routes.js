@@ -9,6 +9,7 @@ const {
   addReaction,
   markMessagesAsRead,
   pinMessage,
+  getPinnedMessages, // ✅ ADD THIS
 } = require("../controllers/message.controller");
 
 const router = express.Router();
@@ -23,5 +24,8 @@ router.put("/:id", editMessage);
 router.delete("/:id", deleteMessage);
 router.post("/:id/reaction", addReaction);
 router.post("/:id/pin", pinMessage);
+
+// ✅ ADD THIS ROUTE FOR PINNED MESSAGES
+router.get("/channel/:channelId/pinned", getPinnedMessages);
 
 module.exports = router;

@@ -18,6 +18,8 @@ const {
   removePinnedFile,
   linkTask,
   unlinkTask,
+  makeAdmin, // ✅ Add this
+  getChannelMembersWithRoles
 } = require("../controllers/channel.controller");
 
 const router = express.Router();
@@ -60,5 +62,11 @@ router.delete("/:id/pinned/:fileId", removePinnedFile);
 router.get("/:id/tasks", getLinkedTasks);
 router.post("/:id/tasks", linkTask);
 router.delete("/:id/tasks/:taskId", unlinkTask);
+
+// ============================================================
+// CHANNEL MEMBER MANAGEMENT - ADD THESE
+// ============================================================
+router.patch("/:id/members/:userId/role", makeAdmin); 
+router.get("/:id/members-with-roles", getChannelMembersWithRoles);
 
 module.exports = router;

@@ -1044,6 +1044,179 @@ const unlinkTask = async (req, res) => {
     }
 };
 
+// ============================================================
+// MAKE USER ADMIN
+// ============================================================
+const makeAdmin = async (req, res) => {
+    try {
+        const { id, userId } = req.params;
+        const currentUserId = req.user._id;
+
+        const channel = await Channel.findById(id);
+        if (!channel) {
+            return res.status(404).json({
+                success: false,
+                message: "Channel not found"
+            });
+        }
+
+        // Check if current user is admin or creator
+        const currentUserMember = channel.members.find(
+            (m) => m.userId.toString() === currentUserId.toString()
+        );
+
+        if (!currentUserMember) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not a member of this channel"
+            });
+        }
+
+        // Only admins and creators can make others admin
+        if (currentUserMember.role !== "admin" && 
+            channel.createdBy.toString() !== currentUserId.toString()) {
+            return res.status(403).json({
+                success: false,
+                message: "Only admins can make other users admin"
+            });
+        }
+
+        // Cannot make the creator admin (they already are)
+        if (channel.createdBy.toString() === userId) {
+            return res.status(400).json({
+                success: false,
+                message: "The channel creator is already an admin"
+            });
+        }
+
+        // Find the target user in members
+        const targetMember = channel.members.find(
+            (m) => m.userId.toString() === userId
+        );
+
+        if (!targetMember) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found in this channel"
+            });
+        }
+
+        // If already admin, remove admin (demote)
+        if (targetMember.role === "admin") {
+            targetMember.role = "member";
+            await channel.save();
+
+            // Emit socket event
+            const io = req.app.get("io");
+            if (io) {
+                io.to(`channel-${id}`).emit("channel:member_updated", {
+                    channelId: id,
+                    userId: userId,
+                    role: "member",
+                    action: "demoted"
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "User demoted to member",
+                data: {
+                    userId: userId,
+                    role: "member",
+                    action: "demoted"
+                }
+            });
+        }
+
+        // Make admin
+        targetMember.role = "admin";
+        await channel.save();
+
+        // Emit socket event
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`channel-${id}`).emit("channel:member_updated", {
+                channelId: id,
+                userId: userId,
+                role: "admin",
+                action: "promoted"
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "User promoted to admin successfully",
+            data: {
+                userId: userId,
+                role: "admin",
+                action: "promoted"
+            }
+        });
+    } catch (error) {
+        console.error("Error making admin:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to make user admin",
+            error: error.message
+        });
+    }
+};
+
+// ============================================================
+// GET CHANNEL MEMBERS WITH ROLES
+// ============================================================
+const getChannelMembersWithRoles = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const currentUserId = req.user._id;
+
+        const channel = await Channel.findById(id)
+            .populate("members.userId", "fullName email avatar onlineStatus role");
+
+        if (!channel) {
+            return res.status(404).json({
+                success: false,
+                message: "Channel not found"
+            });
+        }
+
+        const isMember = channel.members.some(
+            (m) => m.userId._id.toString() === currentUserId.toString()
+        );
+
+        if (!isMember) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not a member of this channel"
+            });
+        }
+
+        const currentUserMember = channel.members.find(
+            (m) => m.userId._id.toString() === currentUserId.toString()
+        );
+
+        const isAdmin = currentUserMember?.role === "admin" || 
+                        channel.createdBy.toString() === currentUserId.toString();
+
+        res.status(200).json({
+            success: true,
+            data: {
+                members: channel.members,
+                total: channel.members.length,
+                isAdmin: isAdmin,
+                createdBy: channel.createdBy
+            }
+        });
+    } catch (error) {
+        console.error("Error fetching members with roles:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch members",
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     createChannel,
     getUserChannels,
@@ -1061,4 +1234,6 @@ module.exports = {
     removePinnedFile,
     linkTask,
     unlinkTask,
+    makeAdmin,
+    getChannelMembersWithRoles
 };

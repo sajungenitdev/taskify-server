@@ -522,6 +522,7 @@ const getPinnedMessages = async (req, res) => {
     const { channelId } = req.params;
     const currentUserId = req.user._id;
 
+    const Channel = require("../models/Channel.model").Channel;
     const channel = await Channel.findById(channelId);
     if (!channel) {
       return res.status(404).json({
@@ -547,6 +548,7 @@ const getPinnedMessages = async (req, res) => {
       isDeleted: false
     })
       .populate("senderId", "fullName email avatar")
+      .populate("replyTo", "content senderId")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -573,5 +575,5 @@ module.exports = {
   markMessagesAsRead,
   pinMessage,
   getPinnedMessages,
-  
+
 };
