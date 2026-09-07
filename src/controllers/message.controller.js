@@ -291,62 +291,68 @@ const deleteMessage = async (req, res) => {
 // ============================================================
 // ADD / REMOVE REACTION
 // ============================================================
+
 const addReaction = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { emoji } = req.body;
+    const { id } = req.params;  // ✅ CHANGE: Use 'id' instead of 'messageId'
+    const { emoji, action } = req.body;
     const currentUserId = req.user._id;
 
-    if (!emoji) {
-      return res.status(400).json({
-        success: false,
-        message: "Emoji is required",
-      });
-    }
+    console.log(`📝 Adding reaction: messageId=${id}, emoji=${emoji}, userId=${currentUserId}`);
 
-    const message = await Message.findById(id);
+    const message = await Message.findById(id);  // ✅ Use 'id'
     if (!message) {
+      console.log(`❌ Message not found: ${id}`);
       return res.status(404).json({
         success: false,
-        message: "Message not found",
+        message: "Message not found"
       });
     }
 
-    const existingReactionIndex = message.reactions.findIndex(
-      (r) => r.userId.toString() === currentUserId.toString() && r.emoji === emoji
+    // Check if user already reacted
+    const existingIndex = message.reactions.findIndex(
+      r => r.emoji === emoji && r.userId.toString() === currentUserId.toString()
     );
 
-    if (existingReactionIndex > -1) {
-      message.reactions.splice(existingReactionIndex, 1);
+    if (action === 'remove' || existingIndex !== -1) {
+      // Remove reaction
+      message.reactions = message.reactions.filter(
+        r => !(r.emoji === emoji && r.userId.toString() === currentUserId.toString())
+      );
+      console.log(`🗑️ Removed reaction ${emoji} from message ${id}`);
     } else {
+      // Add reaction
       message.reactions.push({
-        userId: currentUserId,
         emoji,
+        userId: currentUserId
       });
+      console.log(`➕ Added reaction ${emoji} to message ${id}`);
     }
 
     await message.save();
+    console.log(`✅ Message reactions updated: ${message.reactions.length} reactions`);
 
+    // Emit socket event
     const io = req.app.get("io");
     if (io) {
-      io.to(`channel-${message.channelId.toString()}`).emit("message:reaction", {
-        channelId: message.channelId.toString(),
-        messageId: message._id.toString(),
-        reactions: message.reactions,
+      io.to(`channel-${message.channelId}`).emit("message:reaction", {
+        channelId: message.channelId,
+        messageId: message._id,
+        reactions: message.reactions
       });
+      console.log(`📡 Emitted message:reaction to channel-${message.channelId}`);
     }
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
-      message: "Reaction updated successfully",
-      data: message.reactions,
+      data: message.reactions
     });
   } catch (error) {
-    console.error("Error adding reaction:", error);
-    return res.status(500).json({
+    console.error("Error updating reaction:", error);
+    res.status(500).json({
       success: false,
-      message: "Failed to add reaction",
-      error: error.message,
+      message: "Failed to update reaction",
+      error: error.message
     });
   }
 };
@@ -558,56 +564,105 @@ const getPinnedMessages = async (req, res) => {
   }
 };
 const getMessageById = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const currentUserId = req.user._id;
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user._id;
 
-        const message = await Message.findById(id)
-            .populate("senderId", "fullName email avatar")
-            .populate("replyTo", "content senderId")
-            .populate("mentions.userId", "fullName email");
+    const message = await Message.findById(id)
+      .populate("senderId", "fullName email avatar")
+      .populate("replyTo", "content senderId")
+      .populate("mentions.userId", "fullName email");
 
-        if (!message) {
-            return res.status(404).json({
-                success: false,
-                message: "Message not found"
-            });
-        }
-
-        // Check if user has access to the channel
-        const channel = await Channel.findById(message.channelId);
-        if (!channel) {
-            return res.status(404).json({
-                success: false,
-                message: "Channel not found"
-            });
-        }
-
-        const isMember = channel.members.some(
-            (m) => m.userId.toString() === currentUserId.toString()
-        );
-
-        if (!isMember) {
-            return res.status(403).json({
-                success: false,
-                message: "You don't have access to this message"
-            });
-        }
-
-        res.status(200).json({
-            success: true,
-            data: message
-        });
-    } catch (error) {
-        console.error("Error fetching message:", error);
-        res.status(500).json({
-            success: false,
-            message: "Failed to fetch message",
-            error: error.message
-        });
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found"
+      });
     }
-};
 
+    // Check if user has access to the channel
+    const channel = await Channel.findById(message.channelId);
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found"
+      });
+    }
+
+    const isMember = channel.members.some(
+      (m) => m.userId.toString() === currentUserId.toString()
+    );
+
+    if (!isMember) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have access to this message"
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: message
+    });
+  } catch (error) {
+    console.error("Error fetching message:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch message",
+      error: error.message
+    });
+  }
+};
+// ============================================================
+// REMOVE REACTION
+// ============================================================
+// controllers/message.controller.js
+
+const removeReaction = async (req, res) => {
+  try {
+    const { messageId } = req.params;  // ✅ This is correct - route is /:messageId/reaction
+    const { emoji } = req.body;
+    const currentUserId = req.user._id;
+
+    console.log(`🗑️ Removing reaction: messageId=${messageId}, emoji=${emoji}`);
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found"
+      });
+    }
+
+    // Remove the user's reaction
+    message.reactions = message.reactions.filter(
+      r => !(r.emoji === emoji && r.userId.toString() === currentUserId.toString())
+    );
+
+    await message.save();
+
+    // Emit socket event
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`channel-${message.channelId}`).emit("message:reaction", {
+        channelId: message.channelId,
+        messageId: message._id,
+        reactions: message.reactions
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: message.reactions
+    });
+  } catch (error) {
+    console.error("Error removing reaction:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to remove reaction"
+    });
+  }
+};
 module.exports = {
   sendMessage,
   getChannelMessages,
@@ -617,5 +672,6 @@ module.exports = {
   markMessagesAsRead,
   pinMessage,
   getPinnedMessages,
-  getMessageById
+  getMessageById,
+  removeReaction
 };

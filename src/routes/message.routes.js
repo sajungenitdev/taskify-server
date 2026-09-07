@@ -9,24 +9,62 @@ const {
   addReaction,
   markMessagesAsRead,
   pinMessage,
-  getPinnedMessages, // ✅ ADD THIS
-  getMessageById, // ✅ ADD THIS
+  getPinnedMessages,
+  getMessageById,
+  removeReaction,
 } = require("../controllers/message.controller");
 
 const router = express.Router();
 
+// ============================================================
 // All routes require authentication
+// ============================================================
 router.use(authenticate);
-router.get("/:id", getMessageById); 
+
+// ============================================================
+// GET ROUTES
+// ============================================================
+
+// Get a single message by ID
+router.get("/:id", getMessageById);
+
+// Get channel messages
 router.get("/channel/:channelId", getChannelMessages);
+
+// Get pinned messages in channel
+router.get("/channel/:channelId/pinned", getPinnedMessages);
+
+// ============================================================
+// POST ROUTES
+// ============================================================
+
+// Send a message to channel
 router.post("/channel/:channelId", sendMessage);
+
+// Mark messages as read in channel
 router.post("/channel/:channelId/read", markMessagesAsRead);
-router.put("/:id", editMessage);
-router.delete("/:id", deleteMessage);
+
+// Add reaction to message (uses :id)
 router.post("/:id/reaction", addReaction);
+
+// Pin/Unpin a message (uses :id)
 router.post("/:id/pin", pinMessage);
 
-// ✅ ADD THIS ROUTE FOR PINNED MESSAGES
-router.get("/channel/:channelId/pinned", getPinnedMessages);
+// ============================================================
+// PUT ROUTES
+// ============================================================
+
+// Edit a message
+router.put("/:id", editMessage);
+
+// ============================================================
+// DELETE ROUTES
+// ============================================================
+
+// Delete a message
+router.delete("/:id", deleteMessage);
+
+// Remove reaction from message (uses :messageId)
+router.delete("/:messageId/reaction", removeReaction);
 
 module.exports = router;
