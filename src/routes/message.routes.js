@@ -10,13 +10,14 @@ const {
   markMessagesAsRead,
   pinMessage,
   getPinnedMessages, // ✅ ADD THIS
+  getMessageById, // ✅ ADD THIS
 } = require("../controllers/message.controller");
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(authenticate);
-
+router.get("/:id", getMessageById); 
 router.get("/channel/:channelId", getChannelMessages);
 router.post("/channel/:channelId", sendMessage);
 router.post("/channel/:channelId/read", markMessagesAsRead);

@@ -252,6 +252,8 @@ const getChannelById = async (req, res) => {
 // ============================================================
 // UPDATE CHANNEL
 // ============================================================
+// controllers/channel.controller.js - updateChannel
+
 const updateChannel = async (req, res) => {
     try {
         const { id } = req.params;
@@ -281,10 +283,20 @@ const updateChannel = async (req, res) => {
             });
         }
 
+        // ✅ Validate avatar if provided (base64 image check)
+        if (avatar !== undefined) {
+            if (avatar !== null && !avatar.startsWith('data:image/')) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid avatar format. Must be base64 encoded image",
+                });
+            }
+            channel.avatar = avatar;
+        }
+
         if (name) channel.name = name.toLowerCase().replace(/\s+/g, "-");
         if (description !== undefined) channel.description = description;
         if (topic !== undefined) channel.topic = topic;
-        if (avatar) channel.avatar = avatar;
         if (iconType) channel.iconType = iconType;
         if (iconBg) channel.iconBg = iconBg;
 
@@ -808,10 +820,12 @@ const getPinnedFiles = async (req, res) => {
     }
 };
 
+// controllers/channel.controller.js - addPinnedFile
+
 const addPinnedFile = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, url, size, type } = req.body;
+        const { name, url, size, type, messageId } = req.body;
         const currentUserId = req.user._id;
 
         const channel = await Channel.findById(id);
@@ -833,18 +847,45 @@ const addPinnedFile = async (req, res) => {
             });
         }
 
-        channel.pinnedFiles.push({
-            name,
-            url,
-            size,
-            type,
+        // ✅ Check for duplicate
+        const exists = channel.pinnedFiles.some(
+            (f) => f.url === url || f.messageId?.toString() === messageId
+        );
+
+        if (exists) {
+            return res.status(400).json({
+                success: false,
+                message: "File already pinned",
+            });
+        }
+
+        // ✅ Use the full schema
+        const pinnedFile = {
+            name: name || "Unnamed file",
+            url: url,
+            size: size || 0,
+            type: type || 'file',
+            messageId: messageId || null,
             uploadedBy: {
                 _id: currentUserId,
                 fullName: req.user.fullName,
+                avatar: req.user.avatar || null,
             },
-        });
+            uploadedAt: new Date(),
+        };
 
+        channel.pinnedFiles.push(pinnedFile);
         await channel.save();
+
+        // ✅ Emit socket event
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`channel-${id}`).emit("pinned:updated", {
+                channelId: id,
+                pinnedFile: pinnedFile,
+                action: "added",
+            });
+        }
 
         res.status(200).json({
             success: true,
@@ -866,30 +907,96 @@ const removePinnedFile = async (req, res) => {
         const { id, fileId } = req.params;
         const currentUserId = req.user._id;
 
+        console.log(`🔍 [BACKEND] removePinnedFile START`);
+        console.log(`🔍 [BACKEND] channelId: ${id}, fileId: ${fileId}`);
+        console.log(`🔍 [BACKEND] currentUserId: ${currentUserId}`);
+
         const channel = await Channel.findById(id);
         if (!channel) {
+            console.log(`❌ [BACKEND] Channel not found: ${id}`);
             return res.status(404).json({
                 success: false,
-                message: "Channel not found",
+                message: "Channel not found"
             });
         }
+
+        console.log(`🔍 [BACKEND] Channel found: ${channel.name}`);
+        console.log(`🔍 [BACKEND] Pinned files count: ${channel.pinnedFiles.length}`);
 
         const isAdmin = channel.members.some(
             (m) => m.userId.toString() === currentUserId.toString() && m.role === "admin"
         );
 
         if (!isAdmin && channel.createdBy.toString() !== currentUserId.toString()) {
+            console.log(`❌ [BACKEND] User ${currentUserId} is not admin`);
             return res.status(403).json({
                 success: false,
-                message: "Only admins can remove pinned files",
+                message: "Only admins can remove pinned files"
             });
         }
 
+        // ✅ Find the pinned file to get messageId
+        const pinnedFile = channel.pinnedFiles.find(
+            (f) => f._id.toString() === fileId
+        );
+
+        console.log(`🔍 [BACKEND] Found pinned file:`, pinnedFile);
+
+        // Remove from pinnedFiles
         channel.pinnedFiles = channel.pinnedFiles.filter(
             (f) => f._id.toString() !== fileId
         );
-
         await channel.save();
+
+        console.log(`🔍 [BACKEND] Removed from pinnedFiles, new count: ${channel.pinnedFiles.length}`);
+
+        // ✅ If it's a message, unpin it
+        if (pinnedFile?.messageId) {
+            console.log(`🔍 [BACKEND] Has messageId: ${pinnedFile.messageId}`);
+
+            const Message = require("../models/Message.model").Message;
+            const message = await Message.findById(pinnedFile.messageId);
+
+            if (message) {
+                console.log(`🔍 [BACKEND] Found message: ${message._id}, isPinned: ${message.isPinned}`);
+
+                message.isPinned = false;
+                await message.save();
+
+                console.log(`✅ [BACKEND] Unpinned message ${message._id} from channel ${id}`);
+
+                // ✅ Emit socket event to update chat
+                const io = req.app.get("io");
+                console.log(`🔍 [BACKEND] IO instance: ${io ? 'EXISTS' : 'NULL'}`);
+
+                if (io) {
+                    const roomName = `channel-${id}`;
+                    const eventData = {
+                        channelId: id,
+                        messageId: message._id.toString(),
+                        isPinned: false,
+                    };
+
+                    console.log(`📤 [BACKEND] Emitting "pinned:updated" to room: ${roomName}`, eventData);
+
+                    // Emit to channel room
+                    io.to(roomName).emit("pinned:updated", eventData);
+
+                    // Also emit to the user's personal room for safety
+                    io.to(`user-${currentUserId.toString()}`).emit("pinned:updated", eventData);
+
+                    console.log(`✅ [BACKEND] Socket event emitted successfully`);
+                } else {
+                    console.error(`❌ [BACKEND] IO instance is NULL!`);
+                }
+            } else {
+                console.log(`❌ [BACKEND] Message not found for ID: ${pinnedFile.messageId}`);
+            }
+        } else {
+            console.log(`🔍 [BACKEND] No messageId found in pinned file`);
+        }
+
+        console.log(`✅ [BACKEND] removePinnedFile COMPLETED`);
 
         res.status(200).json({
             success: true,
@@ -897,11 +1004,11 @@ const removePinnedFile = async (req, res) => {
             data: channel.pinnedFiles,
         });
     } catch (error) {
-        console.error("Error removing pinned file:", error);
+        console.error("❌ [BACKEND] Error removing pinned file:", error);
         res.status(500).json({
             success: false,
             message: "Failed to remove pinned file",
-            error: error.message,
+            error: error.message
         });
     }
 };
@@ -947,11 +1054,16 @@ const getLinkedTasks = async (req, res) => {
     }
 };
 
+// ============================================================
+// LINK TASK TO CHANNEL
+// ============================================================
 const linkTask = async (req, res) => {
     try {
         const { id } = req.params;
-        const { taskId, title, status, assignedTo } = req.body;
+        const { taskId, title, status, priority, progress, assignedTo } = req.body;
         const currentUserId = req.user._id;
+
+        console.log(`📌 [BACKEND] linkTask called for channel: ${id}, taskId: ${taskId}`);
 
         const channel = await Channel.findById(id);
         if (!channel) {
@@ -972,17 +1084,53 @@ const linkTask = async (req, res) => {
             });
         }
 
-        channel.linkedTasks.push({
-            taskId,
-            title,
-            status,
-            assignedTo: {
-                _id: assignedTo?._id || null,
-                fullName: assignedTo?.fullName || "Unassigned",
-            },
-        });
+        // Check for duplicate
+        const exists = channel.linkedTasks.some(
+            (t) => t.taskId.toString() === taskId
+        );
 
+        if (exists) {
+            return res.status(400).json({
+                success: false,
+                message: "Task already linked to this channel",
+            });
+        }
+
+        // Get user info for linkedBy
+        const user = await User.findById(currentUserId);
+
+        // Create linked task object
+        const linkedTask = {
+            taskId: taskId,
+            title: title || "Unnamed task",
+            status: status || "pending",
+            priority: priority || "medium",
+            progress: progress || 0,
+            assignedTo: assignedTo ? {
+                _id: assignedTo._id || null,
+                fullName: assignedTo.fullName || "Unassigned",
+                avatar: assignedTo.avatar || null,
+            } : null,
+            linkedBy: {
+                _id: currentUserId,
+                fullName: user?.fullName || req.user.fullName || "Unknown",
+                avatar: user?.avatar || null,
+            },
+            linkedAt: new Date(),
+        };
+
+        channel.linkedTasks.push(linkedTask);
         await channel.save();
+
+        // Emit socket event
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`channel-${id}`).emit("task:linked", {
+                channelId: id,
+                linkedTask: linkedTask,
+                action: "added",
+            });
+        }
 
         res.status(200).json({
             success: true,
@@ -990,7 +1138,7 @@ const linkTask = async (req, res) => {
             data: channel.linkedTasks,
         });
     } catch (error) {
-        console.error("Error linking task:", error);
+        console.error("❌ Error linking task:", error);
         res.status(500).json({
             success: false,
             message: "Failed to link task",
@@ -999,10 +1147,15 @@ const linkTask = async (req, res) => {
     }
 };
 
+// ============================================================
+// UNLINK TASK FROM CHANNEL
+// ============================================================
 const unlinkTask = async (req, res) => {
     try {
         const { id, taskId } = req.params;
         const currentUserId = req.user._id;
+
+        console.log(`📌 [BACKEND] unlinkTask called for channel: ${id}, taskId: ${taskId}`);
 
         const channel = await Channel.findById(id);
         if (!channel) {
@@ -1029,13 +1182,22 @@ const unlinkTask = async (req, res) => {
 
         await channel.save();
 
+        // Emit socket event
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`channel-${id}`).emit("task:unlinked", {
+                channelId: id,
+                taskId: taskId,
+            });
+        }
+
         res.status(200).json({
             success: true,
             message: "Task unlinked successfully",
             data: channel.linkedTasks,
         });
     } catch (error) {
-        console.error("Error unlinking task:", error);
+        console.error("❌ Error unlinking task:", error);
         res.status(500).json({
             success: false,
             message: "Failed to unlink task",
@@ -1043,6 +1205,7 @@ const unlinkTask = async (req, res) => {
         });
     }
 };
+
 
 // ============================================================
 // MAKE USER ADMIN
@@ -1073,7 +1236,7 @@ const makeAdmin = async (req, res) => {
         }
 
         // Only admins and creators can make others admin
-        if (currentUserMember.role !== "admin" && 
+        if (currentUserMember.role !== "admin" &&
             channel.createdBy.toString() !== currentUserId.toString()) {
             return res.status(403).json({
                 success: false,
@@ -1195,8 +1358,8 @@ const getChannelMembersWithRoles = async (req, res) => {
             (m) => m.userId._id.toString() === currentUserId.toString()
         );
 
-        const isAdmin = currentUserMember?.role === "admin" || 
-                        channel.createdBy.toString() === currentUserId.toString();
+        const isAdmin = currentUserMember?.role === "admin" ||
+            channel.createdBy.toString() === currentUserId.toString();
 
         res.status(200).json({
             success: true,

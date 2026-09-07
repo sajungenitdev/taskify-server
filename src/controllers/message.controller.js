@@ -395,12 +395,12 @@ const markMessagesAsRead = async (req, res) => {
 // ============================================================
 // PIN / UNPIN MESSAGE - UPDATED to sync with Channel.pinnedFiles
 // ============================================================
+
 const pinMessage = async (req, res) => {
   try {
     const { id } = req.params;
     const currentUserId = req.user._id;
 
-    // Find the message
     const message = await Message.findById(id);
     if (!message) {
       return res.status(404).json({
@@ -409,8 +409,6 @@ const pinMessage = async (req, res) => {
       });
     }
 
-    // Find the channel
-    const Channel = require("../models/Channel.model").Channel;
     const channel = await Channel.findById(message.channelId);
     if (!channel) {
       return res.status(404).json({
@@ -419,7 +417,6 @@ const pinMessage = async (req, res) => {
       });
     }
 
-    // Check if user is a member of the channel
     const isMember = channel.members.some(
       m => m.userId.toString() === currentUserId.toString()
     );
@@ -436,48 +433,45 @@ const pinMessage = async (req, res) => {
     await message.save();
 
     // ============================================================
-    // 🔥 FIX: Update Channel.pinnedFiles
+    // 🔥 CRITICAL FIX: ALWAYS update Channel.pinnedFiles
     // ============================================================
-    if (message.isPinned && message.attachments && message.attachments.length > 0) {
-      // Add each attachment to pinnedFiles
-      for (const att of message.attachments) {
-        // Check if already exists to avoid duplicates
-        const exists = channel.pinnedFiles.some(
-          (f) => f.url === att.url
-        );
-        if (!exists) {
-          await Channel.findByIdAndUpdate(message.channelId, {
-            $push: {
-              pinnedFiles: {
-                name: att.name,
-                url: att.url,
-                size: att.size || 0,
-                type: att.type || 'file',
-                uploadedBy: {
-                  _id: currentUserId,
-                  fullName: req.user.fullName,
-                },
-                uploadedAt: new Date(),
-              }
-            }
-          });
-        }
-      }
-    } else if (!message.isPinned && message.attachments && message.attachments.length > 0) {
-      // Remove from pinnedFiles when unpinned
-      for (const att of message.attachments) {
+    if (message.isPinned) {
+      // Check if this message already exists in pinnedFiles
+      const exists = channel.pinnedFiles.some(
+        (f) => f.messageId?.toString() === message._id.toString()
+      );
+
+      if (!exists) {
+        // ✅ Add to pinnedFiles - THIS IS WHAT THE SIDEBAR READS!
         await Channel.findByIdAndUpdate(message.channelId, {
-          $pull: {
+          $push: {
             pinnedFiles: {
-              url: att.url
+              name: message.content || "Pinned message",
+              url: `/messages/${message._id}`,
+              size: 0,
+              type: 'message',
+              messageId: message._id,
+              uploadedBy: {
+                _id: currentUserId,
+                fullName: req.user.fullName,
+              },
+              uploadedAt: new Date(),
             }
           }
         });
+        console.log(`✅ PINNED: Added "${message.content || 'Pinned'}" to channel.pinnedFiles`);
       }
+    } else {
+      // Remove from pinnedFiles when unpinned
+      await Channel.findByIdAndUpdate(message.channelId, {
+        $pull: {
+          pinnedFiles: {
+            messageId: message._id
+          }
+        }
+      });
+      console.log(`✅ UNPINNED: Removed message from channel.pinnedFiles`);
     }
-
-    // If message has no attachments but is pinned, we just track it as a pinned message
-    // The pinned files section will show files with attachments only
 
     // Populate sender details
     const populatedMessage = await Message.findById(message._id)
@@ -485,7 +479,7 @@ const pinMessage = async (req, res) => {
       .populate("replyTo", "content senderId")
       .populate("mentions.userId", "fullName email");
 
-    // Emit socket event
+    // Emit socket events
     const io = req.app.get("io");
     if (io) {
       io.to(`channel-${message.channelId.toString()}`).emit("message:updated", {
@@ -493,7 +487,6 @@ const pinMessage = async (req, res) => {
         message: populatedMessage,
       });
 
-      // Also emit a pinned files updated event
       io.to(`channel-${message.channelId.toString()}`).emit("pinned:updated", {
         channelId: message.channelId.toString(),
       });
@@ -505,7 +498,7 @@ const pinMessage = async (req, res) => {
       data: populatedMessage
     });
   } catch (error) {
-    console.error("Error pinning message:", error);
+    console.error("❌ Error pinning message:", error);
     res.status(500).json({
       success: false,
       message: "Failed to pin message",
@@ -513,7 +506,6 @@ const pinMessage = async (req, res) => {
     });
   }
 };
-
 // ============================================================
 // GET PINNED MESSAGES IN CHANNEL
 // ============================================================
@@ -565,6 +557,56 @@ const getPinnedMessages = async (req, res) => {
     });
   }
 };
+const getMessageById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const currentUserId = req.user._id;
+
+        const message = await Message.findById(id)
+            .populate("senderId", "fullName email avatar")
+            .populate("replyTo", "content senderId")
+            .populate("mentions.userId", "fullName email");
+
+        if (!message) {
+            return res.status(404).json({
+                success: false,
+                message: "Message not found"
+            });
+        }
+
+        // Check if user has access to the channel
+        const channel = await Channel.findById(message.channelId);
+        if (!channel) {
+            return res.status(404).json({
+                success: false,
+                message: "Channel not found"
+            });
+        }
+
+        const isMember = channel.members.some(
+            (m) => m.userId.toString() === currentUserId.toString()
+        );
+
+        if (!isMember) {
+            return res.status(403).json({
+                success: false,
+                message: "You don't have access to this message"
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: message
+        });
+    } catch (error) {
+        console.error("Error fetching message:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch message",
+            error: error.message
+        });
+    }
+};
 
 module.exports = {
   sendMessage,
@@ -575,5 +617,5 @@ module.exports = {
   markMessagesAsRead,
   pinMessage,
   getPinnedMessages,
-
+  getMessageById
 };
