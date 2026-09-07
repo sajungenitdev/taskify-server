@@ -1,3 +1,4 @@
+// server.js
 // ==================== DNS OVERRIDE FOR MONGODB SRV ====================
 // Force Node.js to use public DNS servers to resolve MongoDB Atlas SRV cluster records
 const dns = require("dns");
@@ -13,10 +14,17 @@ const mongoose = require("mongoose");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
 const fs = require("fs");
+const http = require("http");
 
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+
+// ==================== SOCKET.IO INITIALIZATION ====================
+const { initializeSocket } = require("./src/socket/index");
+const io = initializeSocket(server);
+app.set("io", io);
 
 // ==================== RATE LIMITING ====================
 const limiter = rateLimit({
@@ -96,6 +104,10 @@ const directories = [
   { path: path.join(uploadsPath, "tasks"), name: "tasks" },
   { path: path.join(uploadsPath, "avatars"), name: "avatars" },
   { path: path.join(uploadsPath, "signatures"), name: "signatures" },
+  { path: path.join(uploadsPath, "voice"), name: "voice" },
+  { path: path.join(uploadsPath, "support"), name: "support" },
+  { path: path.join(uploadsPath, "backups"), name: "backups" },
+  { path: path.join(uploadsPath, "channels"), name: "channels" }, // For channel avatars
 ];
 
 for (const dir of directories) {
@@ -110,11 +122,21 @@ app.use(
   "/uploads",
   express.static(uploadsPath, {
     setHeaders: (res, filePath) => {
-      if (filePath.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
-        res.setHeader(
-          "Content-Type",
-          `image/${path.extname(filePath).slice(1)}`,
-        );
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.webm': 'audio/webm',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+      };
+      if (mimeTypes[ext]) {
+        res.setHeader('Content-Type', mimeTypes[ext]);
       }
       res.setHeader("Cache-Control", "public, max-age=31536000");
     },
@@ -176,7 +198,10 @@ const pricingPlanRoutes = require("./src/routes/pricingPlan.routes");
 const timerRoutes = require("./src/routes/timer.routes");
 const feedbackRoutes = require("./src/routes/feedback.routes");
 
-
+// ==================== CHAT ROUTES ====================
+const channelRoutes = require("./src/routes/channel.routes");
+const messageRoutes = require("./src/routes/message.routes");
+const voiceRoutes = require("./src/routes/voice.routes");
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -187,13 +212,13 @@ app.use("/api/v1/projects", projectRoutes);
 app.use("/api/v1/resources", resourceRoutes);
 app.use("/api/v1/templates", templateRoutes);
 app.use("/api/v1/roles", roleRoutes);
-app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/performance", performanceRoutes);
 app.use("/api/v1/ai", aiRoutes);
 app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/leaves", leaveRoutes);
 app.use("/api/v1/teams", teamRoutes);
 app.use("/api/v1/attendance", attendanceRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/onboarding", onboardingRoutes);
 app.use("/api/v1/workload", workloadRoutes);
 app.use("/api/v1/kpi", kpiRoutes);
@@ -208,6 +233,10 @@ app.use("/api/v1/pricing-plans", pricingPlanRoutes);
 app.use("/api/v1/timer", timerRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 
+// ==================== CHAT ROUTES ====================
+app.use("/api/v1/channels", channelRoutes);
+app.use("/api/v1/messages", messageRoutes);
+app.use("/api/v1/voice", voiceRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
@@ -217,9 +246,9 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
-    mongodb:
-      mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+    mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
     uploadsDir: fs.existsSync(uploadsPath),
+    socketio: io ? "Initialized" : "Not initialized",
     endpoints: {
       tasks: "/api/v1/tasks",
       projects: "/api/v1/projects",
@@ -229,6 +258,9 @@ app.get("/health", (req, res) => {
       auth: "/api/v1/auth",
       users: "/api/v1/users",
       leaves: "/api/v1/leaves",
+      channels: "/api/v1/channels",
+      messages: "/api/v1/messages",
+      voice: "/api/v1/voice",
       testUploads: "/test-uploads",
     },
   });
@@ -250,10 +282,33 @@ app.get("/", (req, res) => {
       resources: "/api/v1/resources",
       templates: "/api/v1/templates",
       leaves: "/api/v1/leaves",
+      channels: "/api/v1/channels",
+      messages: "/api/v1/messages",
+      voice: "/api/v1/voice",
       health: "/health",
       testUploads: "/test-uploads",
     },
   });
+});
+
+// ==================== DEBUG ROUTE ====================
+const { User } = require("./src/models/User.model");
+
+app.get("/api/debug/users", authenticate, requireRole("super_admin", "admin"), async (req, res) => {
+  try {
+    const users = await User.find().select("email fullName trial subscription createdAt");
+    res.json({
+      success: true,
+      data: users,
+      count: users.length
+    });
+  } catch (error) {
+    console.error("Debug users error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
 });
 
 // ==================== 404 HANDLER ====================
@@ -284,16 +339,13 @@ app.use((err, req, res, next) => {
 // ==================== DATABASE CONNECTION ====================
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
-    // Deprecated options removed here
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("✅ MongoDB connected successfully");
     return true;
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error.message);
     if (retries > 0) {
-      console.log(
-        `Retrying in ${delay / 1000} seconds... (${retries} retries left)`,
-      );
+      console.log(`Retrying in ${delay / 1000} seconds... (${retries} retries left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return connectDB(retries - 1, delay);
     }
@@ -318,47 +370,33 @@ const startServer = async () => {
   // Log uploads directory status
   console.log(`\n📁 Uploads directory: ${uploadsPath}`);
   console.log(`📁 Uploads exists: ${fs.existsSync(uploadsPath)}`);
-  console.log(
-    `📁 Tasks uploads exists: ${fs.existsSync(path.join(uploadsPath, "tasks"))}`,
-  );
-  console.log(
-    `📁 Avatars uploads exists: ${fs.existsSync(path.join(uploadsPath, "avatars"))}`,
-  );
-  console.log(
-    `📁 Signatures uploads exists: ${fs.existsSync(path.join(uploadsPath, "signatures"))}`,
-  );
+  console.log(`📁 Tasks uploads exists: ${fs.existsSync(path.join(uploadsPath, "tasks"))}`);
+  console.log(`📁 Avatars uploads exists: ${fs.existsSync(path.join(uploadsPath, "avatars"))}`);
+  console.log(`📁 Signatures uploads exists: ${fs.existsSync(path.join(uploadsPath, "signatures"))}`);
+  console.log(`📁 Voice uploads exists: ${fs.existsSync(path.join(uploadsPath, "voice"))}`);
+  console.log(`📁 Channels uploads exists: ${fs.existsSync(path.join(uploadsPath, "channels"))}`);
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`\n📡 Server:          http://localhost:${PORT}`);
     console.log(`🌍 Environment:     ${process.env.NODE_ENV || "development"}`);
-    console.log(
-      `💾 Database:        ${dbConnected ? "Connected ✅" : "Disconnected ⚠️"}`,
-    );
+    console.log(`💾 Database:        ${dbConnected ? "Connected ✅" : "Disconnected ⚠️"}`);
     console.log(`📁 Static files:    /uploads`);
-    console.log(
-      `🔐 Auth endpoint:   http://localhost:${PORT}/api/v1/auth/login`,
-    );
+    console.log(`🔌 Socket.io:       Initialized ✅`);
+    console.log(`🔐 Auth endpoint:   http://localhost:${PORT}/api/v1/auth/login`);
     console.log(`📋 Tasks endpoint:  http://localhost:${PORT}/api/v1/tasks`);
-    console.log(
-      `📁 Projects endpoint: http://localhost:${PORT}/api/v1/projects`,
-    );
-    console.log(
-      `📦 Resources endpoint: http://localhost:${PORT}/api/v1/resources`,
-    );
-    console.log(
-      `📝 Templates endpoint: http://localhost:${PORT}/api/v1/templates`,
-    );
+    console.log(`📁 Projects endpoint: http://localhost:${PORT}/api/v1/projects`);
+    console.log(`📦 Resources endpoint: http://localhost:${PORT}/api/v1/resources`);
+    console.log(`📝 Templates endpoint: http://localhost:${PORT}/api/v1/templates`);
     console.log(`📋 Leaves endpoint: http://localhost:${PORT}/api/v1/leaves`);
+    console.log(`💬 Channels endpoint: http://localhost:${PORT}/api/v1/channels`);
+    console.log(`💬 Messages endpoint: http://localhost:${PORT}/api/v1/messages`);
+    console.log(`🎤 Voice endpoint:  http://localhost:${PORT}/api/v1/voice`);
     console.log(`🧪 Test uploads:    http://localhost:${PORT}/test-uploads`);
-    console.log(
-      "\n═══════════════════════════════════════════════════════════\n",
-    );
+    console.log("\n═══════════════════════════════════════════════════════════\n");
 
     // Start scheduled jobs
     try {
-      const {
-        startScheduledJobs,
-      } = require("./src/services/notification.service");
+      const { startScheduledJobs } = require("./src/services/notification.service");
       startScheduledJobs();
       console.log("✅ Notification scheduled jobs started");
     } catch (error) {
@@ -374,6 +412,10 @@ const gracefulShutdown = async () => {
     await mongoose.connection.close();
     console.log("📦 MongoDB connection closed");
   }
+  if (io) {
+    await io.close();
+    console.log("🔌 Socket.io closed");
+  }
   process.exit(0);
 };
 
@@ -388,26 +430,6 @@ process.on("unhandledRejection", (reason, promise) => {
 
 process.on("uncaughtException", (error) => {
   console.error("❌ Uncaught Exception:", error);
-});
-
-// server.js - If you added the debug route, make sure it's correct
-
-// Debug route - Add this AFTER your middleware imports and BEFORE the 404 handler
-app.get("/api/debug/users", authenticate, requireRole("super_admin", "admin"), async (req, res) => {
-    try {
-        const users = await User.find().select("email fullName trial subscription createdAt");
-        res.json({
-            success: true,
-            data: users,
-            count: users.length
-        });
-    } catch (error) {
-        console.error("Debug users error:", error);
-        res.status(500).json({ 
-            success: false, 
-            message: error.message 
-        });
-    }
 });
 
 startServer();

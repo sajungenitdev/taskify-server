@@ -1,8 +1,10 @@
+// controllers/notification.controller.js
 const { Notification } = require("../models/Notification.model");
-const { Task } = require("../models/Task.model");
 const { User } = require("../models/User.model");
 
-// Get user notifications with filtering and pagination
+// ============================================================
+// GET USER NOTIFICATIONS
+// ============================================================
 const getUserNotifications = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -63,7 +65,9 @@ const getUserNotifications = async (req, res) => {
   }
 };
 
-// Get notification statistics
+// ============================================================
+// GET NOTIFICATION STATS
+// ============================================================
 const getNotificationStats = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -76,7 +80,7 @@ const getNotificationStats = async (req, res) => {
     ]);
 
     // Get counts by category
-    const categories = ["task", "comment", "approval", "system", "reminder"];
+    const categories = ["task", "comment", "approval", "system", "reminder", "channel", "mention"];
     const byCategory = {};
     for (const category of categories) {
       byCategory[category] = await Notification.countDocuments({
@@ -86,7 +90,7 @@ const getNotificationStats = async (req, res) => {
     }
 
     // Get counts by type
-    const types = ["info", "success", "warning", "error"];
+    const types = ["info", "success", "warning", "error", "mention", "channel_invite"];
     const byType = {};
     for (const type of types) {
       byType[type] = await Notification.countDocuments({ userId, type });
@@ -129,7 +133,9 @@ const getNotificationStats = async (req, res) => {
   }
 };
 
-// Mark notification as read
+// ============================================================
+// MARK AS READ
+// ============================================================
 const markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
@@ -142,9 +148,10 @@ const markAsRead = async (req, res) => {
     );
 
     if (!notification) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notification not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Notification not found",
+      });
     }
 
     res.json({
@@ -158,7 +165,9 @@ const markAsRead = async (req, res) => {
   }
 };
 
-// Mark notification as unread
+// ============================================================
+// MARK AS UNREAD
+// ============================================================
 const markAsUnread = async (req, res) => {
   try {
     const { id } = req.params;
@@ -171,9 +180,10 @@ const markAsUnread = async (req, res) => {
     );
 
     if (!notification) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notification not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Notification not found",
+      });
     }
 
     res.json({
@@ -187,7 +197,9 @@ const markAsUnread = async (req, res) => {
   }
 };
 
-// Mark all notifications as read
+// ============================================================
+// MARK ALL AS READ
+// ============================================================
 const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -207,7 +219,9 @@ const markAllAsRead = async (req, res) => {
   }
 };
 
-// Delete a notification
+// ============================================================
+// DELETE NOTIFICATION
+// ============================================================
 const deleteNotification = async (req, res) => {
   try {
     const { id } = req.params;
@@ -216,9 +230,10 @@ const deleteNotification = async (req, res) => {
     const result = await Notification.findOneAndDelete({ _id: id, userId });
 
     if (!result) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Notification not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Notification not found",
+      });
     }
 
     res.json({
@@ -231,7 +246,9 @@ const deleteNotification = async (req, res) => {
   }
 };
 
-// Delete all read notifications
+// ============================================================
+// DELETE ALL READ NOTIFICATIONS
+// ============================================================
 const deleteAllRead = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -249,16 +266,19 @@ const deleteAllRead = async (req, res) => {
   }
 };
 
-// Bulk actions
+// ============================================================
+// BULK ACTION
+// ============================================================
 const bulkAction = async (req, res) => {
   try {
     const { action, ids } = req.body;
     const userId = req.user._id;
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No notification IDs provided" });
+      return res.status(400).json({
+        success: false,
+        message: "No notification IDs provided",
+      });
     }
 
     let result;
@@ -270,9 +290,10 @@ const bulkAction = async (req, res) => {
     } else if (action === "delete") {
       result = await Notification.deleteMany({ _id: { $in: ids }, userId });
     } else {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid action" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action",
+      });
     }
 
     res.json({
@@ -285,18 +306,9 @@ const bulkAction = async (req, res) => {
   }
 };
 
-// Create notification (helper function for other services)
-const createNotification = async (notificationData) => {
-  try {
-    const notification = await Notification.create(notificationData);
-    return { success: true, data: notification };
-  } catch (error) {
-    console.error("Create notification error:", error);
-    return { success: false, error: error.message };
-  }
-};
-
-// Get unread count
+// ============================================================
+// GET UNREAD COUNT
+// ============================================================
 const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -312,6 +324,19 @@ const getUnreadCount = async (req, res) => {
   }
 };
 
+// ============================================================
+// CREATE NOTIFICATION (Helper)
+// ============================================================
+const createNotification = async (notificationData) => {
+  try {
+    const notification = await Notification.create(notificationData);
+    return { success: true, data: notification };
+  } catch (error) {
+    console.error("Create notification error:", error);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   getUserNotifications,
   getNotificationStats,
@@ -321,6 +346,6 @@ module.exports = {
   deleteNotification,
   deleteAllRead,
   bulkAction,
-  createNotification,
   getUnreadCount,
+  createNotification,
 };

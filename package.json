@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.105.0",
     "@google/genai": "^2.9.0",
     "archiver": "^8.0.0",
+    "aws-sdk": "^2.1693.0",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cookie-parser": "^1.4.6",
@@ -31,6 +32,8 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^9.0.3",
     "request-ip": "^3.3.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "ua-parser-js": "^2.0.10",
     "uuid": "^9.0.1"
   },
