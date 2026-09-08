@@ -1,17 +1,19 @@
 // controllers/message.controller.js
+const path = require("path"); // ✅ IMPORTANT: Add this at the top
 const { Message } = require("../models/Message.model");
 const { Channel } = require("../models/Channel.model");
 const { User } = require("../models/User.model");
 const { Task } = require("../models/Task.model");
 const { Notification } = require("../models/Notification.model");
+const { getFileType, getFileIcon } = require("../middleware/upload.middleware");
 
 // ============================================================
-// SEND MESSAGE - REAL-TIME READY
+// SEND MESSAGE - WITH FILE UPLOAD SUPPORT
 // ============================================================
 const sendMessage = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const { content, type, attachments, linkedTaskId, replyTo, mentions } = req.body;
+    const { content, type, linkedTaskId, replyTo, mentions } = req.body;
     const userId = req.user._id;
 
     // Check if channel exists
@@ -34,21 +36,72 @@ const sendMessage = async (req, res) => {
       });
     }
 
+    // Process attachments from uploaded files
+    let attachments = [];
+    let messageType = type || "text";
+
+    if (req.files && req.files.length > 0) {
+      console.log("📎 Processing files:", req.files.map(f => ({
+        name: f.originalname,
+        destination: f.destination,
+        filename: f.filename,
+        size: f.size,
+        mimetype: f.mimetype
+      })));
+
+      // Process each uploaded file
+      attachments = req.files.map((file) => {
+        const fileType = getFileType(file.mimetype);
+
+        // ✅ FIX: Get the subdirectory name correctly from the destination path
+        // file.destination: E:\...\uploads\chat\images
+        // path.basename(file.destination) => "images"
+        const subDir = path.basename(file.destination);
+
+        // ✅ Build the URL correctly
+        const url = `/uploads/chat/${subDir}/${file.filename}`;
+
+        console.log(`📎 File URL: ${url}`);
+
+        return {
+          name: file.originalname,
+          url: url,
+          size: file.size,
+          mimeType: file.mimetype,
+          type: fileType,
+        };
+      });
+
+      // If there are files, set message type to file (or image if all are images)
+      const allImages = attachments.every(a => a.type === "image");
+      messageType = allImages ? "image" : "file";
+    }
+
+    // Process mentions
+    let processedMentions = [];
+    if (mentions && Array.isArray(mentions)) {
+      processedMentions = mentions.map((mention) => ({
+        userId: mention.userId || mention,
+        name: mention.name || "Unknown",
+      }));
+    }
+
     // Create message
     const message = new Message({
       channelId,
       senderId: userId,
       content: content || "",
-      type: type || "text",
-      attachments: attachments || [],
+      type: messageType,
+      attachments: attachments,
       linkedTaskId: linkedTaskId || null,
       replyTo: replyTo || null,
-      mentions: mentions || [],
+      mentions: processedMentions,
     });
 
     await message.save();
+    console.log("✅ Message saved with attachments:", attachments.length);
 
-    // Populate sender details with nested populate for replyTo
+    // Populate sender details
     const populatedMessage = await Message.findById(message._id)
       .populate("senderId", "fullName email avatar")
       .populate({
@@ -60,7 +113,7 @@ const sendMessage = async (req, res) => {
       })
       .populate("mentions.userId", "fullName email");
 
-    // Update channel lastMessage and updatedAt asynchronously
+    // Update channel lastMessage
     Channel.findByIdAndUpdate(channelId, {
       lastMessage: message._id,
       updatedAt: new Date(),
@@ -77,14 +130,16 @@ const sendMessage = async (req, res) => {
       };
 
       io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:new", payload);
+      console.log("📤 Socket event emitted: message:new");
     }
 
     return res.status(201).json({
       success: true,
       data: populatedMessage,
+      message: "Message sent successfully",
     });
   } catch (error) {
-    console.error("Send message error:", error);
+    console.error("❌ Send message error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -93,7 +148,7 @@ const sendMessage = async (req, res) => {
 };
 
 // ============================================================
-// GET CHANNEL MESSAGES (Fast load with lean + soft delete support)
+// GET CHANNEL MESSAGES
 // ============================================================
 const getChannelMessages = async (req, res) => {
   try {
@@ -113,7 +168,6 @@ const getChannelMessages = async (req, res) => {
       return res.status(403).json({ success: false, message: "You are not a member of this channel" });
     }
 
-    // High performance query using .lean() without filtering out isDeleted: false
     const messages = await Message.find({ channelId })
       .populate("senderId", "fullName email avatar")
       .populate({
@@ -126,7 +180,7 @@ const getChannelMessages = async (req, res) => {
       .limit(parseInt(limit))
       .lean();
 
-    // Mark messages as read in background without blocking response
+    // Mark messages as read in background
     Message.updateMany(
       {
         channelId,
@@ -218,7 +272,7 @@ const editMessage = async (req, res) => {
 };
 
 // ============================================================
-// DELETE MESSAGE (Soft Delete)
+// DELETE MESSAGE
 // ============================================================
 const deleteMessage = async (req, res) => {
   try {
@@ -279,7 +333,7 @@ const deleteMessage = async (req, res) => {
 };
 
 // ============================================================
-// ADD / TOGGLE REACTION (Strictly 1 Reaction per user)
+// ADD REACTION
 // ============================================================
 const addReaction = async (req, res) => {
   try {
@@ -306,7 +360,7 @@ const addReaction = async (req, res) => {
       (r) => r.userId.toString() !== currentUserId.toString()
     );
 
-    // If clicking a different emoji, add the new one (if same, it remains removed)
+    // If clicking a different emoji, add the new one
     if (!alreadyHasThisEmoji) {
       message.reactions.push({
         emoji,
@@ -326,7 +380,6 @@ const addReaction = async (req, res) => {
       };
 
       io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:reaction", payload);
-      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("reaction:updated", payload);
     }
 
     return res.status(200).json({
@@ -360,7 +413,6 @@ const removeReaction = async (req, res) => {
       });
     }
 
-    // Filter out the user's reaction
     message.reactions = message.reactions.filter((r) => {
       if (emoji) {
         return !(r.emoji === emoji && r.userId.toString() === currentUserId.toString());
@@ -380,7 +432,6 @@ const removeReaction = async (req, res) => {
       };
 
       io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:reaction", payload);
-      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("reaction:updated", payload);
     }
 
     return res.status(200).json({
@@ -435,7 +486,7 @@ const markMessagesAsRead = async (req, res) => {
 };
 
 // ============================================================
-// PIN / UNPIN MESSAGE
+// PIN MESSAGE
 // ============================================================
 const pinMessage = async (req, res) => {
   try {
@@ -540,7 +591,7 @@ const pinMessage = async (req, res) => {
 };
 
 // ============================================================
-// GET PINNED MESSAGES IN CHANNEL
+// GET PINNED MESSAGES
 // ============================================================
 const getPinnedMessages = async (req, res) => {
   try {

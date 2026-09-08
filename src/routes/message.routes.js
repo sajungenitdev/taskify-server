@@ -1,6 +1,7 @@
 // routes/message.routes.js
 const express = require("express");
 const { authenticate } = require("../middleware/auth.middleware");
+const { upload } = require("../middleware/upload.middleware");
 const {
   sendMessage,
   getChannelMessages,
@@ -38,8 +39,12 @@ router.get("/channel/:channelId/pinned", getPinnedMessages);
 // POST ROUTES
 // ============================================================
 
-// Send a message to channel
-router.post("/channel/:channelId", sendMessage);
+// ✅ Send a message with optional file uploads (max 10 files, 50MB each)
+router.post(
+  "/channel/:channelId",
+  upload.array("files", 10),
+  sendMessage
+);
 
 // Mark messages as read in channel
 router.post("/channel/:channelId/read", markMessagesAsRead);
