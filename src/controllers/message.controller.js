@@ -6,7 +6,7 @@ const { Task } = require("../models/Task.model");
 const { Notification } = require("../models/Notification.model");
 
 // ============================================================
-// SEND MESSAGE - COMPLETE & REAL-TIME READY
+// SEND MESSAGE - REAL-TIME READY
 // ============================================================
 const sendMessage = async (req, res) => {
   try {
@@ -14,10 +14,8 @@ const sendMessage = async (req, res) => {
     const { content, type, attachments, linkedTaskId, replyTo, mentions } = req.body;
     const userId = req.user._id;
 
-    console.log(`📝 Sending message to channel ${channelId}:`, { content, type, attachments });
-
     // Check if channel exists
-    const channel = await Channel.findById(channelId);
+    const channel = await Channel.findById(channelId).select("members");
     if (!channel) {
       return res.status(404).json({
         success: false,
@@ -50,52 +48,44 @@ const sendMessage = async (req, res) => {
 
     await message.save();
 
-    // ✅ FIXED: Populate sender details with nested populate for replyTo
+    // Populate sender details with nested populate for replyTo
     const populatedMessage = await Message.findById(message._id)
       .populate("senderId", "fullName email avatar")
       .populate({
         path: "replyTo",
         populate: {
           path: "senderId",
-          select: "fullName email avatar"
-        }
+          select: "fullName email avatar",
+        },
       })
       .populate("mentions.userId", "fullName email");
 
-    // Update channel lastMessage and updatedAt
-    await Channel.findByIdAndUpdate(channelId, {
+    // Update channel lastMessage and updatedAt asynchronously
+    Channel.findByIdAndUpdate(channelId, {
       lastMessage: message._id,
       updatedAt: new Date(),
-    });
+    }).exec();
 
-    // ============================================================
-    // 🔥 CRITICAL: EMIT SOCKET EVENT
-    // ============================================================
+    // Broadcast socket event
     const io = req.app.get("io");
     if (io) {
-      console.log(`📡 Emitting message:new to channel-${channelId}`);
-      console.log(`📡 Message content: ${populatedMessage.content}`);
-      console.log(`📡 Sender: ${populatedMessage.senderId?.fullName}`);
-
-      // Broadcast to ALL users in the channel room
-      io.to(`channel-${channelId}`).emit("message:new", {
+      const channelIdStr = channelId.toString();
+      const payload = {
         message: populatedMessage,
-        channelId,
+        channelId: channelIdStr,
         userId: userId.toString(),
-      });
+      };
 
-      console.log(`✅ Message emitted to channel-${channelId}`);
-    } else {
-      console.warn("⚠️ Socket.io not initialized! Check server.js");
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:new", payload);
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: populatedMessage,
     });
   } catch (error) {
     console.error("Send message error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -103,7 +93,7 @@ const sendMessage = async (req, res) => {
 };
 
 // ============================================================
-// GET CHANNEL MESSAGES
+// GET CHANNEL MESSAGES (Fast load with lean + soft delete support)
 // ============================================================
 const getChannelMessages = async (req, res) => {
   try {
@@ -111,45 +101,33 @@ const getChannelMessages = async (req, res) => {
     const { limit = 50, skip = 0 } = req.query;
     const currentUserId = req.user._id;
 
-    const channel = await Channel.findById(channelId);
+    const channel = await Channel.findById(channelId).select("members").lean();
     if (!channel) {
-      return res.status(404).json({
-        success: false,
-        message: "Channel not found",
-      });
+      return res.status(404).json({ success: false, message: "Channel not found" });
     }
 
     const isMember = channel.members.some(
       (m) => m.userId.toString() === currentUserId.toString()
     );
-
     if (!isMember) {
-      return res.status(403).json({
-        success: false,
-        message: "You are not a member of this channel",
-      });
+      return res.status(403).json({ success: false, message: "You are not a member of this channel" });
     }
 
-    // ✅ FIXED: Populate replyTo with full sender details
-    const messages = await Message.find({
-      channelId,
-      isDeleted: false,
-    })
+    // High performance query using .lean() without filtering out isDeleted: false
+    const messages = await Message.find({ channelId })
       .populate("senderId", "fullName email avatar")
       .populate({
         path: "replyTo",
-        populate: {
-          path: "senderId",
-          select: "fullName email avatar"
-        }
+        populate: { path: "senderId", select: "fullName email avatar" },
       })
       .populate("mentions.userId", "fullName")
       .sort({ createdAt: -1 })
       .skip(parseInt(skip))
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
 
-    // Mark messages as read
-    await Message.updateMany(
+    // Mark messages as read in background without blocking response
+    Message.updateMany(
       {
         channelId,
         "readBy.userId": { $ne: currentUserId },
@@ -157,29 +135,19 @@ const getChannelMessages = async (req, res) => {
       },
       {
         $push: {
-          readBy: {
-            userId: currentUserId,
-            readAt: new Date(),
-          },
+          readBy: { userId: currentUserId, readAt: new Date() },
         },
       }
-    );
+    ).exec();
 
-    // Reverse to get chronological order
-    const reversedMessages = messages.reverse();
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: reversedMessages,
-      count: reversedMessages.length,
+      data: messages.reverse(),
+      count: messages.length,
     });
   } catch (error) {
     console.error("Error fetching messages:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch messages",
-      error: error.message,
-    });
+    return res.status(500).json({ success: false, message: "Failed to fetch messages", error: error.message });
   }
 };
 
@@ -220,14 +188,18 @@ const editMessage = async (req, res) => {
 
     const populatedMessage = await Message.findById(message._id)
       .populate("senderId", "fullName email avatar")
-      .populate("replyTo", "content senderId");
+      .populate("replyTo", "content senderId")
+      .lean();
 
     const io = req.app.get("io");
     if (io) {
-      io.to(`channel-${message.channelId.toString()}`).emit("message:updated", {
-        channelId: message.channelId.toString(),
+      const channelIdStr = message.channelId.toString();
+      const payload = {
+        channelId: channelIdStr,
         message: populatedMessage,
-      });
+      };
+
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:updated", payload);
     }
 
     return res.status(200).json({
@@ -246,7 +218,7 @@ const editMessage = async (req, res) => {
 };
 
 // ============================================================
-// DELETE MESSAGE
+// DELETE MESSAGE (Soft Delete)
 // ============================================================
 const deleteMessage = async (req, res) => {
   try {
@@ -261,7 +233,7 @@ const deleteMessage = async (req, res) => {
       });
     }
 
-    const channel = await Channel.findById(message.channelId);
+    const channel = await Channel.findById(message.channelId).select("members").lean();
     const userMember = channel?.members.find(
       (m) => m.userId.toString() === currentUserId.toString()
     );
@@ -277,14 +249,19 @@ const deleteMessage = async (req, res) => {
     }
 
     message.isDeleted = true;
+    message.content = "";
+    message.attachments = [];
     await message.save();
 
     const io = req.app.get("io");
     if (io) {
-      io.to(`channel-${message.channelId.toString()}`).emit("message:deleted", {
-        channelId: message.channelId.toString(),
+      const channelIdStr = message.channelId.toString();
+      const payload = {
+        channelId: channelIdStr,
         messageId: message._id.toString(),
-      });
+      };
+
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:deleted", payload);
     }
 
     return res.status(200).json({
@@ -302,70 +279,119 @@ const deleteMessage = async (req, res) => {
 };
 
 // ============================================================
-// ADD / REMOVE REACTION
+// ADD / TOGGLE REACTION (Strictly 1 Reaction per user)
 // ============================================================
-
 const addReaction = async (req, res) => {
   try {
-    const { id } = req.params;  // ✅ CHANGE: Use 'id' instead of 'messageId'
-    const { emoji, action } = req.body;
+    const messageId = req.params.id || req.params.messageId;
+    const { emoji } = req.body;
     const currentUserId = req.user._id;
 
-    console.log(`📝 Adding reaction: messageId=${id}, emoji=${emoji}, userId=${currentUserId}`);
-
-    const message = await Message.findById(id);  // ✅ Use 'id'
-    if (!message) {
-      console.log(`❌ Message not found: ${id}`);
-      return res.status(404).json({
-        success: false,
-        message: "Message not found"
-      });
+    if (!emoji) {
+      return res.status(400).json({ success: false, message: "Emoji is required" });
     }
 
-    // Check if user already reacted
-    const existingIndex = message.reactions.findIndex(
-      r => r.emoji === emoji && r.userId.toString() === currentUserId.toString()
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({ success: false, message: "Message not found" });
+    }
+
+    // Check if user already has this exact reaction active
+    const alreadyHasThisEmoji = message.reactions.some(
+      (r) => r.emoji === emoji && r.userId.toString() === currentUserId.toString()
     );
 
-    if (action === 'remove' || existingIndex !== -1) {
-      // Remove reaction
-      message.reactions = message.reactions.filter(
-        r => !(r.emoji === emoji && r.userId.toString() === currentUserId.toString())
-      );
-      console.log(`🗑️ Removed reaction ${emoji} from message ${id}`);
-    } else {
-      // Add reaction
+    // Filter out ANY previous reaction from this user
+    message.reactions = message.reactions.filter(
+      (r) => r.userId.toString() !== currentUserId.toString()
+    );
+
+    // If clicking a different emoji, add the new one (if same, it remains removed)
+    if (!alreadyHasThisEmoji) {
       message.reactions.push({
         emoji,
-        userId: currentUserId
+        userId: currentUserId,
       });
-      console.log(`➕ Added reaction ${emoji} to message ${id}`);
     }
 
     await message.save();
-    console.log(`✅ Message reactions updated: ${message.reactions.length} reactions`);
 
-    // Emit socket event
     const io = req.app.get("io");
     if (io) {
-      io.to(`channel-${message.channelId}`).emit("message:reaction", {
-        channelId: message.channelId,
-        messageId: message._id,
-        reactions: message.reactions
-      });
-      console.log(`📡 Emitted message:reaction to channel-${message.channelId}`);
+      const channelIdStr = message.channelId.toString();
+      const payload = {
+        channelId: channelIdStr,
+        messageId: message._id.toString(),
+        reactions: message.reactions,
+      };
+
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:reaction", payload);
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("reaction:updated", payload);
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: message.reactions
+      data: message.reactions,
     });
   } catch (error) {
     console.error("Error updating reaction:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to update reaction",
-      error: error.message
+      error: error.message,
+    });
+  }
+};
+
+// ============================================================
+// REMOVE REACTION
+// ============================================================
+const removeReaction = async (req, res) => {
+  try {
+    const messageId = req.params.id || req.params.messageId;
+    const { emoji } = req.body;
+    const currentUserId = req.user._id;
+
+    const message = await Message.findById(messageId);
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    // Filter out the user's reaction
+    message.reactions = message.reactions.filter((r) => {
+      if (emoji) {
+        return !(r.emoji === emoji && r.userId.toString() === currentUserId.toString());
+      }
+      return r.userId.toString() !== currentUserId.toString();
+    });
+
+    await message.save();
+
+    const io = req.app.get("io");
+    if (io) {
+      const channelIdStr = message.channelId.toString();
+      const payload = {
+        channelId: channelIdStr,
+        messageId: message._id.toString(),
+        reactions: message.reactions,
+      };
+
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:reaction", payload);
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("reaction:updated", payload);
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: message.reactions,
+    });
+  } catch (error) {
+    console.error("Error removing reaction:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to remove reaction",
     });
   }
 };
@@ -378,7 +404,6 @@ const markMessagesAsRead = async (req, res) => {
     const { channelId } = req.params;
     const currentUserId = req.user._id;
 
-    // 🔥 FIX: Single atomic query instead of N blocking saves
     await Message.updateMany(
       {
         channelId,
@@ -409,12 +434,9 @@ const markMessagesAsRead = async (req, res) => {
   }
 };
 
-// controllers/message.controller.js
-
 // ============================================================
-// PIN / UNPIN MESSAGE - UPDATED to sync with Channel.pinnedFiles
+// PIN / UNPIN MESSAGE
 // ============================================================
-
 const pinMessage = async (req, res) => {
   try {
     const { id } = req.params;
@@ -424,7 +446,7 @@ const pinMessage = async (req, res) => {
     if (!message) {
       return res.status(404).json({
         success: false,
-        message: "Message not found"
+        message: "Message not found",
       });
     }
 
@@ -432,181 +454,7 @@ const pinMessage = async (req, res) => {
     if (!channel) {
       return res.status(404).json({
         success: false,
-        message: "Channel not found"
-      });
-    }
-
-    const isMember = channel.members.some(
-      m => m.userId.toString() === currentUserId.toString()
-    );
-
-    if (!isMember) {
-      return res.status(403).json({
-        success: false,
-        message: "You are not a member of this channel"
-      });
-    }
-
-    // Toggle pin status
-    message.isPinned = !message.isPinned;
-    await message.save();
-
-    // ============================================================
-    // 🔥 CRITICAL FIX: ALWAYS update Channel.pinnedFiles
-    // ============================================================
-    if (message.isPinned) {
-      // Check if this message already exists in pinnedFiles
-      const exists = channel.pinnedFiles.some(
-        (f) => f.messageId?.toString() === message._id.toString()
-      );
-
-      if (!exists) {
-        // ✅ Add to pinnedFiles - THIS IS WHAT THE SIDEBAR READS!
-        await Channel.findByIdAndUpdate(message.channelId, {
-          $push: {
-            pinnedFiles: {
-              name: message.content || "Pinned message",
-              url: `/messages/${message._id}`,
-              size: 0,
-              type: 'message',
-              messageId: message._id,
-              uploadedBy: {
-                _id: currentUserId,
-                fullName: req.user.fullName,
-              },
-              uploadedAt: new Date(),
-            }
-          }
-        });
-        console.log(`✅ PINNED: Added "${message.content || 'Pinned'}" to channel.pinnedFiles`);
-      }
-    } else {
-      // Remove from pinnedFiles when unpinned
-      await Channel.findByIdAndUpdate(message.channelId, {
-        $pull: {
-          pinnedFiles: {
-            messageId: message._id
-          }
-        }
-      });
-      console.log(`✅ UNPINNED: Removed message from channel.pinnedFiles`);
-    }
-
-    // Populate sender details
-    const populatedMessage = await Message.findById(message._id)
-      .populate("senderId", "fullName email avatar")
-      .populate("replyTo", "content senderId")
-      .populate("mentions.userId", "fullName email");
-
-    // Emit socket events
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`channel-${message.channelId.toString()}`).emit("message:updated", {
-        channelId: message.channelId.toString(),
-        message: populatedMessage,
-      });
-
-      io.to(`channel-${message.channelId.toString()}`).emit("pinned:updated", {
-        channelId: message.channelId.toString(),
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: message.isPinned ? "Message pinned successfully" : "Message unpinned successfully",
-      data: populatedMessage
-    });
-  } catch (error) {
-    console.error("❌ Error pinning message:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to pin message",
-      error: error.message
-    });
-  }
-};
-// ============================================================
-// GET PINNED MESSAGES IN CHANNEL
-// ============================================================
-const getPinnedMessages = async (req, res) => {
-  try {
-    const { channelId } = req.params;
-    const currentUserId = req.user._id;
-
-    const Channel = require("../models/Channel.model").Channel;
-    const channel = await Channel.findById(channelId);
-    if (!channel) {
-      return res.status(404).json({
-        success: false,
-        message: "Channel not found"
-      });
-    }
-
-    const isMember = channel.members.some(
-      m => m.userId.toString() === currentUserId.toString()
-    );
-
-    if (!isMember) {
-      return res.status(403).json({
-        success: false,
-        message: "You are not a member of this channel"
-      });
-    }
-
-    // ✅ FIXED: Populate replyTo with full sender details
-    const messages = await Message.find({
-      channelId,
-      isPinned: true,
-      isDeleted: false
-    })
-      .populate("senderId", "fullName email avatar")
-      .populate({
-        path: "replyTo",
-        populate: {
-          path: "senderId",
-          select: "fullName email avatar"
-        }
-      })
-      .populate("mentions.userId", "fullName")
-      .sort({ createdAt: -1 });
-
-    res.status(200).json({
-      success: true,
-      data: messages,
-      count: messages.length
-    });
-  } catch (error) {
-    console.error("Error fetching pinned messages:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch pinned messages",
-      error: error.message
-    });
-  }
-};
-const getMessageById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const currentUserId = req.user._id;
-
-    const message = await Message.findById(id)
-      .populate("senderId", "fullName email avatar")
-      .populate("replyTo", "content senderId")
-      .populate("mentions.userId", "fullName email");
-
-    if (!message) {
-      return res.status(404).json({
-        success: false,
-        message: "Message not found"
-      });
-    }
-
-    // Check if user has access to the channel
-    const channel = await Channel.findById(message.channelId);
-    if (!channel) {
-      return res.status(404).json({
-        success: false,
-        message: "Channel not found"
+        message: "Channel not found",
       });
     }
 
@@ -617,73 +465,192 @@ const getMessageById = async (req, res) => {
     if (!isMember) {
       return res.status(403).json({
         success: false,
-        message: "You don't have access to this message"
+        message: "You are not a member of this channel",
       });
     }
 
-    res.status(200).json({
+    message.isPinned = !message.isPinned;
+    await message.save();
+
+    if (message.isPinned) {
+      const exists = channel.pinnedFiles.some(
+        (f) => f.messageId?.toString() === message._id.toString()
+      );
+
+      if (!exists) {
+        await Channel.findByIdAndUpdate(message.channelId, {
+          $push: {
+            pinnedFiles: {
+              name: message.content || "Pinned message",
+              url: `/messages/${message._id}`,
+              size: 0,
+              type: "message",
+              messageId: message._id,
+              uploadedBy: {
+                _id: currentUserId,
+                fullName: req.user.fullName,
+              },
+              uploadedAt: new Date(),
+            },
+          },
+        });
+      }
+    } else {
+      await Channel.findByIdAndUpdate(message.channelId, {
+        $pull: {
+          pinnedFiles: {
+            messageId: message._id,
+          },
+        },
+      });
+    }
+
+    const populatedMessage = await Message.findById(message._id)
+      .populate("senderId", "fullName email avatar")
+      .populate("replyTo", "content senderId")
+      .populate("mentions.userId", "fullName email")
+      .lean();
+
+    const io = req.app.get("io");
+    if (io) {
+      const channelIdStr = message.channelId.toString();
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("message:updated", {
+        channelId: channelIdStr,
+        message: populatedMessage,
+      });
+
+      io.to(channelIdStr).to(`channel-${channelIdStr}`).emit("pinned:updated", {
+        channelId: channelIdStr,
+      });
+    }
+
+    return res.status(200).json({
       success: true,
-      data: message
+      message: message.isPinned ? "Message pinned successfully" : "Message unpinned successfully",
+      data: populatedMessage,
     });
   } catch (error) {
-    console.error("Error fetching message:", error);
-    res.status(500).json({
+    console.error("❌ Error pinning message:", error);
+    return res.status(500).json({
       success: false,
-      message: "Failed to fetch message",
-      error: error.message
+      message: "Failed to pin message",
+      error: error.message,
     });
   }
 };
-// ============================================================
-// REMOVE REACTION
-// ============================================================
-// controllers/message.controller.js
 
-const removeReaction = async (req, res) => {
+// ============================================================
+// GET PINNED MESSAGES IN CHANNEL
+// ============================================================
+const getPinnedMessages = async (req, res) => {
   try {
-    const { messageId } = req.params;  // ✅ This is correct - route is /:messageId/reaction
-    const { emoji } = req.body;
+    const { channelId } = req.params;
     const currentUserId = req.user._id;
 
-    console.log(`🗑️ Removing reaction: messageId=${messageId}, emoji=${emoji}`);
+    const channel = await Channel.findById(channelId).select("members").lean();
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found",
+      });
+    }
 
-    const message = await Message.findById(messageId);
+    const isMember = channel.members.some(
+      (m) => m.userId.toString() === currentUserId.toString()
+    );
+
+    if (!isMember) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a member of this channel",
+      });
+    }
+
+    const messages = await Message.find({
+      channelId,
+      isPinned: true,
+    })
+      .populate("senderId", "fullName email avatar")
+      .populate({
+        path: "replyTo",
+        populate: {
+          path: "senderId",
+          select: "fullName email avatar",
+        },
+      })
+      .populate("mentions.userId", "fullName")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: messages,
+      count: messages.length,
+    });
+  } catch (error) {
+    console.error("Error fetching pinned messages:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch pinned messages",
+      error: error.message,
+    });
+  }
+};
+
+// ============================================================
+// GET MESSAGE BY ID
+// ============================================================
+const getMessageById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const currentUserId = req.user._id;
+
+    const message = await Message.findById(id)
+      .populate("senderId", "fullName email avatar")
+      .populate("replyTo", "content senderId")
+      .populate("mentions.userId", "fullName email")
+      .lean();
+
     if (!message) {
       return res.status(404).json({
         success: false,
-        message: "Message not found"
+        message: "Message not found",
       });
     }
 
-    // Remove the user's reaction
-    message.reactions = message.reactions.filter(
-      r => !(r.emoji === emoji && r.userId.toString() === currentUserId.toString())
+    const channel = await Channel.findById(message.channelId).select("members").lean();
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found",
+      });
+    }
+
+    const isMember = channel.members.some(
+      (m) => m.userId.toString() === currentUserId.toString()
     );
 
-    await message.save();
-
-    // Emit socket event
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`channel-${message.channelId}`).emit("message:reaction", {
-        channelId: message.channelId,
-        messageId: message._id,
-        reactions: message.reactions
+    if (!isMember) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have access to this message",
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      data: message.reactions
+      data: message,
     });
   } catch (error) {
-    console.error("Error removing reaction:", error);
-    res.status(500).json({
+    console.error("Error fetching message:", error);
+    return res.status(500).json({
       success: false,
-      message: "Failed to remove reaction"
+      message: "Failed to fetch message",
+      error: error.message,
     });
   }
 };
+
 module.exports = {
   sendMessage,
   getChannelMessages,
@@ -694,5 +661,5 @@ module.exports = {
   pinMessage,
   getPinnedMessages,
   getMessageById,
-  removeReaction
+  removeReaction,
 };
