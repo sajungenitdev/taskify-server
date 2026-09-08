@@ -43,17 +43,23 @@ const sendMessage = async (req, res) => {
       content: content || "",
       type: type || "text",
       attachments: attachments || [],
-      linkedTaskId: linkedTaskId || null, // ✅ Now works with schema
+      linkedTaskId: linkedTaskId || null,
       replyTo: replyTo || null,
       mentions: mentions || [],
     });
 
     await message.save();
 
-    // Populate sender details
+    // ✅ FIXED: Populate sender details with nested populate for replyTo
     const populatedMessage = await Message.findById(message._id)
       .populate("senderId", "fullName email avatar")
-      .populate("replyTo", "content senderId")
+      .populate({
+        path: "replyTo",
+        populate: {
+          path: "senderId",
+          select: "fullName email avatar"
+        }
+      })
       .populate("mentions.userId", "fullName email");
 
     // Update channel lastMessage and updatedAt
@@ -124,18 +130,25 @@ const getChannelMessages = async (req, res) => {
       });
     }
 
+    // ✅ FIXED: Populate replyTo with full sender details
     const messages = await Message.find({
       channelId,
       isDeleted: false,
     })
       .populate("senderId", "fullName email avatar")
-      .populate("replyTo", "content senderId")
+      .populate({
+        path: "replyTo",
+        populate: {
+          path: "senderId",
+          select: "fullName email avatar"
+        }
+      })
       .populate("mentions.userId", "fullName")
       .sort({ createdAt: -1 })
       .skip(parseInt(skip))
       .limit(parseInt(limit));
 
-    // 🔥 FIX: Use updateMany instead of loop
+    // Mark messages as read
     await Message.updateMany(
       {
         channelId,
@@ -540,13 +553,21 @@ const getPinnedMessages = async (req, res) => {
       });
     }
 
+    // ✅ FIXED: Populate replyTo with full sender details
     const messages = await Message.find({
       channelId,
       isPinned: true,
       isDeleted: false
     })
       .populate("senderId", "fullName email avatar")
-      .populate("replyTo", "content senderId")
+      .populate({
+        path: "replyTo",
+        populate: {
+          path: "senderId",
+          select: "fullName email avatar"
+        }
+      })
+      .populate("mentions.userId", "fullName")
       .sort({ createdAt: -1 });
 
     res.status(200).json({

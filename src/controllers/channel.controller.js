@@ -8,6 +8,7 @@ const { emitToChannel, emitToUser, emitToAll } = require("../socket/index");
 // ============================================================
 // CREATE CHANNEL
 // ============================================================
+
 const createChannel = async (req, res) => {
     try {
         const { name, type, description, members, projectId } = req.body;
@@ -44,9 +45,10 @@ const createChannel = async (req, res) => {
                 });
             }
         } else {
-            // For normal channels, verify name uniqueness for active channels
+            // ✅ FIXED: Case-insensitive search for existing channel
             const existingChannel = await Channel.findOne({
-                name: name.toLowerCase().trim(),
+                name: { $regex: new RegExp(`^${name.trim()}$`, 'i') },
+                type: { $ne: "direct" },
                 isArchived: false,
             });
 
@@ -83,8 +85,9 @@ const createChannel = async (req, res) => {
             direct: { iconType: "laptop", iconBg: "#0D9488" },
         };
 
+        // ✅ FIXED: Keep spaces in name, only trim
         const channel = new Channel({
-            name: name.toLowerCase().trim(),
+            name: name.trim(),
             type: channelType,
             description: description || "",
             members: memberList,
@@ -100,7 +103,7 @@ const createChannel = async (req, res) => {
             .populate("members.userId", "fullName email avatar onlineStatus role")
             .populate("createdBy", "fullName email");
 
-        // 🔥 CRITICAL: Force active sockets of all participants to join this channel room immediately
+        // Force active sockets of all participants to join this channel room immediately
         const io = req.app.get("io");
         if (io) {
             populatedChannel.members.forEach((m) => {
@@ -254,6 +257,86 @@ const getChannelById = async (req, res) => {
 // ============================================================
 // controllers/channel.controller.js - updateChannel
 
+// const updateChannel = async (req, res) => {
+//     try {
+//         const { id } = req.params;
+//         const { name, description, topic, avatar, iconType, iconBg } = req.body;
+//         const currentUserId = req.user._id;
+
+//         const channel = await Channel.findById(id);
+//         if (!channel) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Channel not found",
+//             });
+//         }
+
+//         const userMember = channel.members.find(
+//             (m) => m.userId.toString() === currentUserId.toString()
+//         );
+
+//         if (
+//             !userMember ||
+//             (userMember.role !== "admin" &&
+//                 channel.createdBy.toString() !== currentUserId.toString())
+//         ) {
+//             return res.status(403).json({
+//                 success: false,
+//                 message: "Only admins can update channel settings",
+//             });
+//         }
+
+//         // ✅ Validate avatar if provided (base64 image check)
+//         if (avatar !== undefined) {
+//             if (avatar !== null && !avatar.startsWith('data:image/')) {
+//                 return res.status(400).json({
+//                     success: false,
+//                     message: "Invalid avatar format. Must be base64 encoded image",
+//                 });
+//             }
+//             channel.avatar = avatar;
+//         }
+
+//         if (name) channel.name = name.toLowerCase().replace(/\s+/g, "-");
+//         if (description !== undefined) channel.description = description;
+//         if (topic !== undefined) channel.topic = topic;
+//         if (iconType) channel.iconType = iconType;
+//         if (iconBg) channel.iconBg = iconBg;
+
+//         await channel.save();
+
+//         const populatedChannel = await Channel.findById(channel._id)
+//             .populate("members.userId", "fullName email avatar onlineStatus role")
+//             .populate("createdBy", "fullName email");
+
+//         emitToChannel(channel._id.toString(), "channel:updated", {
+//             channelId: channel._id.toString(),
+//             updates: {
+//                 name: channel.name,
+//                 description: channel.description,
+//                 topic: channel.topic,
+//                 avatar: channel.avatar,
+//                 iconType: channel.iconType,
+//                 iconBg: channel.iconBg,
+//             },
+//         });
+
+//         res.status(200).json({
+//             success: true,
+//             message: "Channel updated successfully",
+//             data: populatedChannel,
+//         });
+//     } catch (error) {
+//         console.error("Error updating channel:", error);
+//         res.status(500).json({
+//             success: false,
+//             message: "Failed to update channel",
+//             error: error.message,
+//         });
+//     }
+// };
+// controllers/channel.controller.js - updateChannel
+
 const updateChannel = async (req, res) => {
     try {
         const { id } = req.params;
@@ -283,6 +366,14 @@ const updateChannel = async (req, res) => {
             });
         }
 
+        // ✅ FIXED: Keep spaces in channel name (only trim and lowercase)
+        if (name) channel.name = name.trim(); // ✅ Remove .replace(/\s+/g, "-")
+
+        if (description !== undefined) channel.description = description;
+        if (topic !== undefined) channel.topic = topic;
+        if (iconType) channel.iconType = iconType;
+        if (iconBg) channel.iconBg = iconBg;
+
         // ✅ Validate avatar if provided (base64 image check)
         if (avatar !== undefined) {
             if (avatar !== null && !avatar.startsWith('data:image/')) {
@@ -293,12 +384,6 @@ const updateChannel = async (req, res) => {
             }
             channel.avatar = avatar;
         }
-
-        if (name) channel.name = name.toLowerCase().replace(/\s+/g, "-");
-        if (description !== undefined) channel.description = description;
-        if (topic !== undefined) channel.topic = topic;
-        if (iconType) channel.iconType = iconType;
-        if (iconBg) channel.iconBg = iconBg;
 
         await channel.save();
 
