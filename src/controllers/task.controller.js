@@ -4,6 +4,7 @@
 const { Task } = require("../models/Task.model");
 const { User } = require("../models/User.model");
 const { Project } = require("../models/Project.model");
+const TimerEntry = require("../models/TimerEntry");
 const mongoose = require("mongoose");
 const { NotificationService } = require("../services/notification.service");
 const { createNotification } = require("./notification.controller");
@@ -1188,6 +1189,77 @@ const submitEvidence = async (req, res) => {
 // ============================================================
 // UPDATE TASK TIME
 // ============================================================
+const getTaskTime = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+
+    const task = await Task.findById(id).select("assignedTo departmentId").lean();
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const isAssignee = task.assignedTo && task.assignedTo.toString() === user._id.toString();
+    const isManager = ["admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "line_manager"].includes(user.role);
+    if (!isAssignee && !isManager) {
+      return res.status(403).json({ success: false, message: "No permission" });
+    }
+
+    // Sum all COMPLETED timer entries for this task (duration is in seconds)
+    const entries = await TimerEntry.find({
+      taskId: id,
+      isRunning: false,
+    })
+      .select("duration")
+      .lean();
+
+    const totalSeconds = entries.reduce(
+      (sum, e) => sum + (Number(e.duration) || 0),
+      0
+    );
+
+    // Currently running entry (duration already accumulated + live delta)
+    const running = await TimerEntry.findOne({
+      taskId: id,
+      isRunning: true,
+    }).lean();
+
+    let runningSeconds = 0;
+    if (running) {
+      const base = Number(running.duration) || 0;
+      const liveDelta = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(running.startTime).getTime()) / 1000)
+      );
+      runningSeconds = base + liveDelta;
+    }
+
+    const combinedSeconds = totalSeconds + runningSeconds;
+
+    res.json({
+      success: true,
+      data: {
+        taskId: id,
+        totalSeconds,
+        totalMinutes: Math.round((totalSeconds / 60) * 100) / 100,
+        runningSeconds,
+        runningMinutes: Math.round((runningSeconds / 60) * 100) / 100,
+        combinedSeconds,
+        combinedMinutes: Math.round((combinedSeconds / 60) * 100) / 100,
+        entriesCount: entries.length,
+        hasRunning: !!running,
+      },
+    });
+  } catch (error) {
+    console.error("❌ getTaskTime error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get task time",
+      error: error.message,
+    });
+  }
+};
+
 const updateTaskTime = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1202,7 +1274,7 @@ const updateTaskTime = async (req, res) => {
       });
     }
 
-    if (typeof actualMinutes !== 'number' || actualMinutes < 0) {
+    if (typeof actualMinutes !== "number" || actualMinutes < 0) {
       return res.status(400).json({
         success: false,
         message: "actualMinutes must be a positive number",
@@ -1211,14 +1283,11 @@ const updateTaskTime = async (req, res) => {
 
     const task = await Task.findById(id);
     if (!task) {
-      return res.status(404).json({
-        success: false,
-        message: "Task not found",
-      });
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
 
     const isAssignee = task.assignedTo && task.assignedTo.toString() === req.user._id.toString();
-    const isManager = ['admin', 'super_admin', 'hr_manager', 'dept_manager', 'project_manager', 'line_manager'].includes(req.user.role);
+    const isManager = ["admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "line_manager"].includes(req.user.role);
 
     if (!isAssignee && !isManager) {
       return res.status(403).json({
@@ -1231,10 +1300,7 @@ const updateTaskTime = async (req, res) => {
 
     const updatedTask = await Task.findByIdAndUpdate(
       id,
-      {
-        actualMinutes: roundedMinutes,
-        updatedAt: new Date()
-      },
+      { actualMinutes: roundedMinutes, updatedAt: new Date() },
       { new: true }
     )
       .populate("assignedTo", "fullName email")
@@ -1242,7 +1308,7 @@ const updateTaskTime = async (req, res) => {
       .populate("projectId", "name code")
       .lean();
 
-    console.log(`⏱️ Task ${id} time updated: ${roundedMinutes}m by ${req.user.email}`);
+    console.log(`⏱️ Task ${id} time set to: ${roundedMinutes}m by ${req.user.email}`);
 
     res.status(200).json({
       success: true,
@@ -3766,6 +3832,7 @@ module.exports = {
   resumeTaskTimer,
   completeTask,
   updateTaskTime,
+  getTaskTime,
   getSubTasks,
   getMilestones,
   getTaskHierarchy,

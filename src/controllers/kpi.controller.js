@@ -88,6 +88,111 @@ const getKPIWeights = async (req, res) => {
   }
 };
 
+// ============================================================
+// HELPER: Resolve a KPI by real ObjectId OR synthetic "calculated_*" ID
+// ============================================================
+const resolveKPIScore = async (kpiId, options = {}) => {
+  const { autoCreate = false } = options;
+
+  if (!kpiId || typeof kpiId !== "string") return null;
+
+  // 1. Real Mongo ObjectId
+  if (mongoose.Types.ObjectId.isValid(kpiId) && kpiId.length === 24) {
+    return KPIScore.findById(kpiId);
+  }
+
+  // 2. Synthetic: "calculated_<userId>_<Month>_<Year>"
+  const match = kpiId.match(/^calculated_([a-f\d]{24})_([A-Za-z]+)_(\d{4})$/i);
+  if (!match) return null;
+
+  const [, userId, monthName, yearStr] = match;
+  const year = Number(yearStr);
+  const monthIdx = MONTHS.indexOf(monthName) + 1;
+
+  if (monthIdx < 1 || !year) return null;
+
+  const monthStr = `${year}-${String(monthIdx).padStart(2, "0")}`;
+
+  // Query that handles both schema shapes
+  let kpi = await KPIScore.findOne({
+    $or: [{ "userId._id": userId }, { userId: userId }],
+    month: monthStr,
+    year: year,
+  });
+
+  // Auto-create a placeholder so the first feedback can attach
+  if (!kpi && autoCreate) {
+    const user = await User.findById(userId)
+      .select(
+        "fullName email role profilePhoto avatar employeeId departmentId department"
+      )
+      .lean();
+
+    if (!user) return null;
+
+    // ---- Resolve departmentId (schema-required) ----
+    let departmentId = null;
+
+    if (user.departmentId) {
+      departmentId =
+        typeof user.departmentId === "object" && user.departmentId._id
+          ? user.departmentId._id
+          : user.departmentId;
+    }
+
+    if (!departmentId && user.department) {
+      departmentId =
+        typeof user.department === "object" && user.department._id
+          ? user.department._id
+          : user.department;
+    }
+
+    // Fallback: any department in the DB (so validation passes)
+    if (!departmentId) {
+      const { Department } = require("../models/Department.model");
+      const anyDept = await Department.findOne().select("_id").lean();
+      departmentId = anyDept?._id || null;
+    }
+
+    // If we truly cannot resolve one, abort — do not attempt to save
+    if (!departmentId) {
+      console.error(
+        `❌ Cannot auto-create KPIScore — no department available for user ${userId}`
+      );
+      return null;
+    }
+
+    try {
+      kpi = await KPIScore.create({
+        userId: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          employeeId: user.employeeId,
+          role: user.role,
+          avatar: user.profilePhoto || user.avatar || null,
+        },
+        departmentId,
+        month: monthStr,
+        year,
+        scores: {},
+        totalScore: 0,
+        performanceLevel: "average",
+        calculatedAt: new Date(),
+        calculatedBy: null,
+        comments: "Auto-created on first feedback",
+      });
+      console.log(
+        `✅ Auto-created KPIScore for user ${userId} (${monthStr}) department=${departmentId}`
+      );
+    } catch (createErr) {
+      console.error("❌ Failed to auto-create KPIScore:", createErr.message);
+      return null;
+    }
+  }
+
+  return kpi;
+};
 const upsertKPIWeights = async (req, res) => {
   try {
     const { departmentId } = req.params;
@@ -1070,9 +1175,8 @@ const cleanupOrphanedKPIScores = async () => {
 
 
 // ============================================================
-// KPI Feedback System
+// GET KPI FEEDBACK (accepts real or synthetic ID, tolerant of missing KPI)
 // ============================================================
-// UPDATE: Get feedback - More flexible
 const getKPIFeedback = async (req, res) => {
   try {
     const { kpiId } = req.params;
@@ -1080,20 +1184,31 @@ const getKPIFeedback = async (req, res) => {
 
     console.log(`📋 Getting feedback for KPI: ${kpiId}`);
 
-    // Check if KPI exists
-    const kpi = await KPIScore.findById(kpiId);
+    // Resolve the KPI. If it doesn't exist yet, return a friendly empty state.
+    const kpi = await resolveKPIScore(kpiId);
+
     if (!kpi) {
-      return res.status(404).json({
-        success: false,
-        message: "KPI record not found",
+      console.log(`ℹ️ No KPI record yet for: ${kpiId}`);
+      return res.json({
+        success: true,
+        data: {
+          feedback: [],
+          canEdit: true,
+          isLocked: false,
+          lockMessage: "",
+          existingFeedback: null,
+          totalFeedback: 0,
+          hasFeedback: false,
+          hasKPI: false,
+        },
       });
     }
 
     // Get all feedback (including deleted ones for admin)
-    let query = { kpiId, isDeleted: false };
+    let query = { kpiId: kpi._id, isDeleted: false };
     const isAdmin = ["super_admin", "admin"].includes(user.role);
     if (isAdmin) {
-      query = { kpiId };
+      query = { kpiId: kpi._id };
     }
 
     const feedback = await KPIFeedback.find(query)
@@ -1104,26 +1219,30 @@ const getKPIFeedback = async (req, res) => {
       .sort({ createdAt: -1 });
 
     // Check if KPI is locked
+    const targetUserId = kpi.userId?._id || kpi.userId;
     const lockStatus = await KPILockStatus.findOne({
-      userId: kpi.userId,
+      userId: targetUserId,
       month: kpi.month,
       year: kpi.year,
     });
 
     const isLocked = lockStatus ? lockStatus.isLocked : false;
-    const lockMessage = lockStatus?.lockReason || "KPI is locked. Feedback is read-only.";
+    const lockMessage =
+      lockStatus?.lockReason || "KPI is locked. Feedback is read-only.";
 
     // Check if user can edit
-    const canEdit = !isLocked && (
-      user.role === "super_admin" ||
-      user.role === "admin" ||
-      user.role === "hr_manager" ||
-      user.role === "dept_manager" ||
-      user.role === "project_manager"
-    );
+    const canEdit =
+      !isLocked &&
+      (user.role === "super_admin" ||
+        user.role === "admin" ||
+        user.role === "hr_manager" ||
+        user.role === "dept_manager" ||
+        user.role === "project_manager");
 
     // Check if user has existing feedback
-    const existingFeedback = feedback.find(f => f.createdBy?._id?.toString() === user._id.toString());
+    const existingFeedback = feedback.find(
+      (f) => f.createdBy?._id?.toString() === user._id.toString()
+    );
 
     console.log(`✅ Found ${feedback.length} feedback records`);
 
@@ -1137,6 +1256,8 @@ const getKPIFeedback = async (req, res) => {
         existingFeedback: existingFeedback || null,
         totalFeedback: feedback.length,
         hasFeedback: feedback.length > 0,
+        hasKPI: true,
+        kpiId: kpi._id,
       },
     });
   } catch (error) {
@@ -1148,7 +1269,9 @@ const getKPIFeedback = async (req, res) => {
   }
 };
 
-// Add feedback to a KPI
+// ============================================================
+// ADD KPI FEEDBACK (auto-creates KPI for synthetic IDs)
+// ============================================================
 const addKPIFeedback = async (req, res) => {
   try {
     const { kpiId } = req.params;
@@ -1170,17 +1293,23 @@ const addKPIFeedback = async (req, res) => {
       });
     }
 
-    // Check if KPI exists
-    const kpi = await KPIScore.findById(kpiId);
+    // ✅ Resolve KPI — auto-create if this is the first feedback for a fresh "calculated_*" ID
+    const kpi = await resolveKPIScore(kpiId, { autoCreate: true });
     if (!kpi) {
       return res.status(404).json({
         success: false,
-        message: "KPI record not found",
+        message: "KPI record not found for the given identifier",
       });
     }
 
     // Check if user has permission to add feedback
-    const allowedRoles = ["super_admin", "admin", "hr_manager", "dept_manager", "project_manager"];
+    const allowedRoles = [
+      "super_admin",
+      "admin",
+      "hr_manager",
+      "dept_manager",
+      "project_manager",
+    ];
     if (!allowedRoles.includes(user.role)) {
       return res.status(403).json({
         success: false,
@@ -1189,8 +1318,9 @@ const addKPIFeedback = async (req, res) => {
     }
 
     // Check if KPI is locked
+    const targetUserId = kpi.userId?._id || kpi.userId;
     const lockStatus = await KPILockStatus.findOne({
-      userId: kpi.userId,
+      userId: targetUserId,
       month: kpi.month,
       year: kpi.year,
     });
@@ -1198,14 +1328,15 @@ const addKPIFeedback = async (req, res) => {
     if (lockStatus && lockStatus.isLocked) {
       return res.status(403).json({
         success: false,
-        message: lockStatus.lockReason || "KPI is locked. Cannot add feedback.",
+        message:
+          lockStatus.lockReason || "KPI is locked. Cannot add feedback.",
         isLocked: true,
       });
     }
 
     // Check if user already gave feedback for this KPI
     const existingFeedback = await KPIFeedback.findOne({
-      kpiId,
+      kpiId: kpi._id,
       createdBy: user._id,
       isDeleted: false,
     });
@@ -1220,8 +1351,8 @@ const addKPIFeedback = async (req, res) => {
 
     // Create feedback
     const feedback = await KPIFeedback.create({
-      kpiId,
-      userId: kpi.userId,
+      kpiId: kpi._id,
+      userId: targetUserId,
       comment: comment.trim(),
       rating: rating && rating >= 1 && rating <= 5 ? rating : undefined,
       createdBy: user._id,
@@ -1232,7 +1363,7 @@ const addKPIFeedback = async (req, res) => {
       .populate("userId", "fullName email role profilePhoto avatar")
       .populate("createdBy", "fullName email role profilePhoto avatar");
 
-    res.json({
+    res.status(201).json({
       success: true,
       message: "Feedback added successfully",
       data: populatedFeedback,
@@ -1246,14 +1377,18 @@ const addKPIFeedback = async (req, res) => {
   }
 };
 
-// UPDATE: Update feedback - More flexible
+// ============================================================
+// UPDATE KPI FEEDBACK
+// ============================================================
 const updateKPIFeedback = async (req, res) => {
   try {
     const { kpiId, feedbackId } = req.params;
     const { comment, rating } = req.body;
     const user = req.user;
 
-    console.log(`✏️ Updating feedback: kpiId=${kpiId}, feedbackId=${feedbackId}`);
+    console.log(
+      `✏️ Updating feedback: kpiId=${kpiId}, feedbackId=${feedbackId}`
+    );
 
     // Validate input
     if (!comment || comment.trim().length === 0) {
@@ -1276,8 +1411,8 @@ const updateKPIFeedback = async (req, res) => {
       isDeleted: false,
     });
 
-    // If not found, try with kpiId as well
-    if (!feedback) {
+    // If not found, try with kpiId as well — but only if kpiId is a real ObjectId
+    if (!feedback && mongoose.Types.ObjectId.isValid(kpiId) && kpiId.length === 24) {
       feedback = await KPIFeedback.findOne({
         _id: feedbackId,
         kpiId: kpiId,
@@ -1295,7 +1430,11 @@ const updateKPIFeedback = async (req, res) => {
     // Check if user can edit this feedback
     const isOwner = feedback.createdBy.toString() === user._id.toString();
     const isAdmin = ["super_admin", "admin"].includes(user.role);
-    const isManager = ["hr_manager", "dept_manager", "project_manager"].includes(user.role);
+    const isManager = [
+      "hr_manager",
+      "dept_manager",
+      "project_manager",
+    ].includes(user.role);
 
     if (!isOwner && !isAdmin && !isManager) {
       return res.status(403).json({
@@ -1304,11 +1443,12 @@ const updateKPIFeedback = async (req, res) => {
       });
     }
 
-    // Check if KPI is locked
-    const kpi = await KPIScore.findById(kpiId);
+    // ✅ Resolve the KPI for the lock check
+    const kpi = await resolveKPIScore(kpiId);
     if (kpi) {
+      const targetUserId = kpi.userId?._id || kpi.userId;
       const lockStatus = await KPILockStatus.findOne({
-        userId: kpi.userId,
+        userId: targetUserId,
         month: kpi.month,
         year: kpi.year,
       });
@@ -1316,7 +1456,8 @@ const updateKPIFeedback = async (req, res) => {
       if (lockStatus && lockStatus.isLocked) {
         return res.status(403).json({
           success: false,
-          message: lockStatus.lockReason || "KPI is locked. Cannot edit feedback.",
+          message:
+            lockStatus.lockReason || "KPI is locked. Cannot edit feedback.",
           isLocked: true,
         });
       }
@@ -1354,13 +1495,10 @@ const updateKPIFeedback = async (req, res) => {
   }
 };
 
-// Check if KPI is locked
 const checkKPILockStatus = async (req, res) => {
   try {
     const { userId } = req.params;
     const { month, year } = req.query;
-
-    console.log(`🔍 Checking lock status for:`, { userId, month, year });
 
     if (!month || !year) {
       return res.status(400).json({
@@ -1371,15 +1509,15 @@ const checkKPILockStatus = async (req, res) => {
 
     const monthStr = `${year}-${String(month).padStart(2, "0")}`;
 
-    // Check if KPI exists for this user
+    // 👇 Use $or to match both schema shapes
     const kpi = await KPIScore.findOne({
-      userId: userId,
+      $or: [{ "userId._id": userId }, { userId: userId }],
       month: monthStr,
       year: parseInt(year),
     });
 
+    // No KPI → not locked
     if (!kpi) {
-      console.log(`⚠️ No KPI found for user ${userId} in ${monthStr}`);
       return res.json({
         success: true,
         data: {
@@ -1390,7 +1528,6 @@ const checkKPILockStatus = async (req, res) => {
       });
     }
 
-    // Check lock status
     const lockStatus = await KPILockStatus.findOne({
       userId: userId,
       month: monthStr,
@@ -1398,9 +1535,8 @@ const checkKPILockStatus = async (req, res) => {
     });
 
     const isLocked = lockStatus ? lockStatus.isLocked : false;
-    const lockMessage = lockStatus?.lockReason || "KPI is locked. Feedback is read-only.";
-
-    console.log(`✅ Lock status: ${isLocked ? 'LOCKED' : 'UNLOCKED'}`);
+    const lockMessage =
+      lockStatus?.lockReason || "KPI is locked. Feedback is read-only.";
 
     res.json({
       success: true,
@@ -1498,6 +1634,11 @@ const lockKPI = async (req, res) => {
   }
 };
 
+
+
+// ============================================================
+// DELETE KPI FEEDBACK (soft delete)
+// ============================================================
 const deleteKPIFeedback = async (req, res) => {
   try {
     const { kpiId, feedbackId } = req.params;
@@ -1508,15 +1649,14 @@ const deleteKPIFeedback = async (req, res) => {
     console.log(`  - feedbackId: ${feedbackId}`);
     console.log(`  - user: ${user._id} (${user.role})`);
 
-    // First try to find the feedback by ID only
+    // Find feedback by ID only
     let feedback = await KPIFeedback.findOne({
       _id: feedbackId,
       isDeleted: false,
     });
 
-    // If not found, try with kpiId
-    if (!feedback) {
-      console.log(`⚠️ Feedback not found with ID only, trying with kpiId...`);
+    // Fallback: also match kpiId if it's a real ObjectId
+    if (!feedback && mongoose.Types.ObjectId.isValid(kpiId) && kpiId.length === 24) {
       feedback = await KPIFeedback.findOne({
         _id: feedbackId,
         kpiId: kpiId,
@@ -1524,12 +1664,9 @@ const deleteKPIFeedback = async (req, res) => {
       });
     }
 
-    // If still not found, try finding any feedback with this ID
+    // Fallback: allow finding even if soft-deleted (for idempotent delete)
     if (!feedback) {
-      console.log(`⚠️ Feedback not found with kpiId, trying without isDeleted filter...`);
-      feedback = await KPIFeedback.findOne({
-        _id: feedbackId,
-      });
+      feedback = await KPIFeedback.findOne({ _id: feedbackId });
     }
 
     if (!feedback) {
@@ -1544,27 +1681,35 @@ const deleteKPIFeedback = async (req, res) => {
       _id: feedback._id,
       kpiId: feedback.kpiId,
       createdBy: feedback.createdBy,
-      isDeleted: feedback.isDeleted
+      isDeleted: feedback.isDeleted,
     });
 
     // Check if user can delete this feedback
     const isOwner = feedback.createdBy.toString() === user._id.toString();
     const isAdmin = ["super_admin", "admin"].includes(user.role);
-    const isManager = ["hr_manager", "dept_manager", "project_manager"].includes(user.role);
+    const isManager = [
+      "hr_manager",
+      "dept_manager",
+      "project_manager",
+    ].includes(user.role);
 
     if (!isOwner && !isAdmin && !isManager) {
-      console.log(`❌ Permission denied for user ${user._id} to delete feedback ${feedbackId}`);
+      console.log(
+        `❌ Permission denied for user ${user._id} to delete feedback ${feedbackId}`
+      );
       return res.status(403).json({
         success: false,
         message: "You don't have permission to delete this feedback",
       });
     }
 
-    // Check if KPI is locked
-    const kpi = await KPIScore.findById(feedback.kpiId || kpiId);
+    // ✅ Resolve the KPI for the lock check
+    const resolvedKpiId = feedback.kpiId?.toString() || kpiId;
+    const kpi = await resolveKPIScore(resolvedKpiId);
     if (kpi) {
+      const targetUserId = kpi.userId?._id || kpi.userId;
       const lockStatus = await KPILockStatus.findOne({
-        userId: kpi.userId,
+        userId: targetUserId,
         month: kpi.month,
         year: kpi.year,
       });
@@ -1572,7 +1717,8 @@ const deleteKPIFeedback = async (req, res) => {
       if (lockStatus && lockStatus.isLocked) {
         return res.status(403).json({
           success: false,
-          message: lockStatus.lockReason || "KPI is locked. Cannot delete feedback.",
+          message:
+            lockStatus.lockReason || "KPI is locked. Cannot delete feedback.",
           isLocked: true,
         });
       }

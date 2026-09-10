@@ -36,7 +36,8 @@ const {
   getDependencyChain,
   updateDependencyType,
   getDependencyStatistics,
-  reorderSingleTask
+  reorderSingleTask,
+  getTaskTime,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -87,37 +88,20 @@ router.get("/project/:projectId/summary", getProjectTasksSummary);
 // ============================================================
 // 🆕 MILESTONE ROUTES
 // ============================================================
-router.get(
-  "/project/:projectId/milestones",
-  authenticate,
-  getMilestones
-);
+router.get("/project/:projectId/milestones", authenticate, getMilestones);
 
 // ============================================================
 // 🆕 SUB-TASK ROUTES
 // ============================================================
-router.get(
-  "/:id/subtasks",
-  authenticate,
-  getSubTasks
-);
-
-router.get(
-  "/:id/hierarchy",
-  authenticate,
-  getTaskHierarchy
-);
+router.get("/:id/subtasks", authenticate, getSubTasks);
+router.get("/:id/hierarchy", authenticate, getTaskHierarchy);
 
 // ============================================================
 // 🆕 DEPENDENCY ROUTES - MUST COME BEFORE /:id ROUTES
 // ============================================================
 
 // Get dependency statistics
-router.get(
-  "/dependencies/statistics",
-  authenticate,
-  getDependencyStatistics
-);
+router.get("/dependencies/statistics", authenticate, getDependencyStatistics);
 
 // Get project dependency graph
 router.get(
@@ -127,18 +111,10 @@ router.get(
 );
 
 // Get dependency chain for a task
-router.get(
-  "/:id/dependencies/chain",
-  authenticate,
-  getDependencyChain
-);
+router.get("/:id/dependencies/chain", authenticate, getDependencyChain);
 
 // Get all dependencies for a task
-router.get(
-  "/:id/dependencies",
-  authenticate,
-  getTaskDependencies
-);
+router.get("/:id/dependencies", authenticate, getTaskDependencies);
 
 // Add a single dependency to a task
 router.post(
@@ -231,7 +207,7 @@ router.post(
       .isISO8601()
       .withMessage("Each task must have a valid deadline"),
   ],
-  bulkCreateTasks,
+  bulkCreateTasks
 );
 
 router.post(
@@ -250,14 +226,14 @@ router.post(
       .isISO8601()
       .withMessage("Each task must have a valid deadline"),
   ],
-  bulkCreateTasksWithoutProject,
+  bulkCreateTasksWithoutProject
 );
 
 router.post(
   "/project/:projectId/import",
   authenticate,
   [body("tasks").isArray().withMessage("Tasks must be an array")],
-  importTasksFromFile,
+  importTasksFromFile
 );
 
 router.put(
@@ -272,7 +248,7 @@ router.put(
       .isNumeric()
       .withMessage("Each item must have an order number"),
   ],
-  reorderTasks,
+  reorderTasks
 );
 
 // ============================================================
@@ -289,11 +265,20 @@ router.post(
     body("assignedTo").notEmpty().withMessage("AssignedTo is required"),
     body("projectId").notEmpty().withMessage("ProjectId is required"),
     body("deadline").isISO8601().withMessage("Valid deadline is required"),
-    body("isMilestone").optional().isBoolean().withMessage("isMilestone must be boolean"),
-    body("parentTaskId").optional().isMongoId().withMessage("parentTaskId must be valid ObjectId"),
-    body("startDate").optional().isISO8601().withMessage("startDate must be valid date"),
+    body("isMilestone")
+      .optional()
+      .isBoolean()
+      .withMessage("isMilestone must be boolean"),
+    body("parentTaskId")
+      .optional()
+      .isMongoId()
+      .withMessage("parentTaskId must be valid ObjectId"),
+    body("startDate")
+      .optional()
+      .isISO8601()
+      .withMessage("startDate must be valid date"),
   ],
-  createTask,
+  createTask
 );
 
 // ============================================================
@@ -307,18 +292,26 @@ router.get("/:id/extension-requests", authenticate, getExtensionRequests);
 router.patch(
   "/:id/status",
   [
-    body("status").isIn([
-      "pending",
-      "in_progress",
-      "submitted",
-      "completed",
-      "overdue",
-      "rejected",
-    ]).withMessage("Invalid status value"),
-    body("actualMinutes").optional().isNumeric().withMessage("actualMinutes must be a number"),
-    body("evidenceUrls").optional().isArray().withMessage("evidenceUrls must be an array"),
+    body("status")
+      .isIn([
+        "pending",
+        "in_progress",
+        "submitted",
+        "completed",
+        "overdue",
+        "rejected",
+      ])
+      .withMessage("Invalid status value"),
+    body("actualMinutes")
+      .optional()
+      .isNumeric()
+      .withMessage("actualMinutes must be a number"),
+    body("evidenceUrls")
+      .optional()
+      .isArray()
+      .withMessage("evidenceUrls must be an array"),
   ],
-  updateTaskStatus,
+  updateTaskStatus
 );
 
 // Submit evidence
@@ -329,7 +322,7 @@ router.post(
     body("evidenceUrls").isArray().withMessage("evidenceUrls must be an array"),
     body("evidenceUrls.*").isURL().withMessage("Each URL must be valid"),
   ],
-  submitEvidence,
+  submitEvidence
 );
 
 // Request extension
@@ -341,7 +334,7 @@ router.post(
       .withMessage("Valid requested date is required"),
     body("reason").notEmpty().withMessage("Reason is required"),
   ],
-  requestExtension,
+  requestExtension
 );
 
 // ============================================================
@@ -349,34 +342,39 @@ router.post(
 // ============================================================
 
 // Start timer
-router.post(
-  "/:id/timer/start",
-  authenticate,
-  startTaskTimer
-);
+router.post("/:id/timer/start", authenticate, startTaskTimer);
 
 // Pause timer
 router.post(
   "/:id/timer/pause",
   authenticate,
-  [
-    body("elapsedTime").isNumeric().withMessage("elapsedTime must be a number"),
-  ],
+  [body("elapsedTime").isNumeric().withMessage("elapsedTime must be a number")],
   pauseTaskTimer
 );
 
 // Resume timer
-router.post(
-  "/:id/timer/resume",
-  authenticate,
-  resumeTaskTimer
-);
+router.post("/:id/timer/resume", authenticate, resumeTaskTimer);
 
 // Complete task (also stops timer)
+router.patch("/:id/complete", authenticate, completeTask);
+
+// ============================================================
+// TASK TIME
+// ============================================================
+
+// Get the task's total time (sum of all timer entries)
+router.get("/:id/time", authenticate, getTaskTime);
+
+// Update task time (overwrite absolute value)
 router.patch(
-  "/:id/complete",
+  "/:id/time",
   authenticate,
-  completeTask
+  [
+    body("actualMinutes")
+      .isNumeric()
+      .withMessage("actualMinutes must be a number"),
+  ],
+  updateTaskTime
 );
 
 // ============================================================
@@ -398,19 +396,12 @@ router.post(
       .isISO8601()
       .withMessage("Valid new deadline is required"),
   ],
-  approveExtension,
+  approveExtension
 );
 
-// Update task time
-router.patch(
-  "/:id/time",
-  authenticate,
-  [
-    body("actualMinutes").isNumeric().withMessage("actualMinutes must be a number"),
-  ],
-  updateTaskTime
-);
-
+// ============================================================
+// REORDER SINGLE TASK
+// ============================================================
 router.patch(
   "/:id/reorder",
   authenticate,
@@ -418,7 +409,7 @@ router.patch(
     body("order").isNumeric().withMessage("Order must be a number"),
     body("status").optional().isString().withMessage("Status must be a string"),
   ],
-  reorderSingleTask,
+  reorderSingleTask
 );
 
 // ============================================================
@@ -451,22 +442,35 @@ router.post("/:id/reviews/:reviewId/respond", respondToReview);
 // /:id ROUTES - MUST COME LAST
 // ============================================================
 router.get("/:id", getTaskById);
+
 router.put(
   "/:id",
   authenticate,
   [
-    body("isMilestone").optional().isBoolean().withMessage("isMilestone must be boolean"),
-    body("parentTaskId").optional().isMongoId().withMessage("parentTaskId must be valid ObjectId"),
+    body("isMilestone")
+      .optional()
+      .isBoolean()
+      .withMessage("isMilestone must be boolean"),
+    body("parentTaskId")
+      .optional()
+      .isMongoId()
+      .withMessage("parentTaskId must be valid ObjectId"),
   ],
   updateTask
 );
+
 router.delete(
   "/:id",
   authenticate,
-  requireRole("admin", "super_admin", "hr_manager", "dept_manager", "project_manager", "line_manager"),
+  requireRole(
+    "admin",
+    "super_admin",
+    "hr_manager",
+    "dept_manager",
+    "project_manager",
+    "line_manager"
+  ),
   deleteTask
 );
-
-
 
 module.exports = router;
