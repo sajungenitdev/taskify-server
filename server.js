@@ -197,6 +197,7 @@ const { authenticate, requireRole } = require("./src/middleware/auth.middleware"
 const pricingPlanRoutes = require("./src/routes/pricingPlan.routes");
 const timerRoutes = require("./src/routes/timer.routes");
 const feedbackRoutes = require("./src/routes/feedback.routes");
+const expenseRoutes = require("./src/routes/expense.routes");
 
 // ==================== CHAT ROUTES ====================
 const channelRoutes = require("./src/routes/channel.routes");
@@ -237,6 +238,7 @@ app.use("/api/v1/feedback", feedbackRoutes);
 app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/messages", messageRoutes);
 app.use("/api/v1/voice", voiceRoutes);
+app.use("/api/v1/expenses", expenseRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {

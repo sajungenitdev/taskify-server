@@ -26,7 +26,7 @@ const notificationSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ["task", "comment", "approval", "system", "reminder", "channel", "mention"],
+      enum: ["task", "comment", "approval", "system", "reminder", "channel", "mention", "expense"],
       default: "system",
       index: true,
     },
