@@ -42,7 +42,13 @@ const ExpenseSchema = new mongoose.Schema(
             required: true,
             min: 0,
         },
-        currency: { type: String, default: "BDT" },
+        currency: {
+            type: String,
+            enum: ["BDT", "SAR", "USD", "AED", "INR", "EUR", "GBP"],
+            default: "BDT",
+            required: true,
+            uppercase: true,
+        },
 
         // For meals: number of guests
         guests: { type: Number, default: 0 },
