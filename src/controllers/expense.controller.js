@@ -708,6 +708,74 @@ const getExpenseStats = async (req, res) => {
 };
 
 // ============================================================
+// GET ALL EXPENSES (admin / super_admin / hr_manager only)
+// ============================================================
+const getAllExpenses = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (!canApprove(user)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only Admin, Super Admin, or HR can view all expenses",
+      });
+    }
+
+    const {
+      status,
+      category,
+      month,
+      year,
+      employeeId,
+      page = 1,
+      limit = 200,
+    } = req.query;
+
+    const query = {};
+    if (status && status !== "all") query.status = status;
+    if (category && category !== "all") query.category = category;
+    if (employeeId) query.employeeId = employeeId;
+
+    if (month && year) {
+      const m = parseInt(month);
+      const y = parseInt(year);
+      query.expenseDate = {
+        $gte: new Date(y, m - 1, 1),
+        $lte: new Date(y, m, 0, 23, 59, 59),
+      };
+    }
+
+    const [expenses, total] = await Promise.all([
+      Expense.find(query)
+        .populate("employeeId", "fullName email role avatar profilePhoto")
+        .populate("approvedBy", "fullName email")
+        .sort({ expenseDate: -1, createdAt: -1 })
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(parseInt(limit))
+        .lean(),
+      Expense.countDocuments(query),
+    ]);
+
+    res.json({
+      success: true,
+      data: expenses,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error("Get all expenses error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 module.exports = {
@@ -716,6 +784,7 @@ module.exports = {
   getApprovalQueue,
   approveExpense,
   batchApproveExpenses,
+  getAllExpenses,
   rejectExpense,
   getExpenseById,
   markAsPaid,
