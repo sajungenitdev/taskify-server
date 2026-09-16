@@ -11,12 +11,12 @@ function buildChecklist(tender, tasks) {
 
   const daysToDeadline = tender.lastDateOfSubmission
     ? Math.max(
-        0,
-        Math.ceil(
-          (new Date(tender.lastDateOfSubmission).getTime() - Date.now()) /
-            86400000
-        )
+      0,
+      Math.ceil(
+        (new Date(tender.lastDateOfSubmission).getTime() - Date.now()) /
+        86400000
       )
+    )
     : 0;
 
   return [
@@ -39,7 +39,7 @@ function buildChecklist(tender, tasks) {
 }
 
 /* ============================================================
- * LIST — active + submitted tenders (for the Submission tab)
+ * LIST — active + submitted tenders
  * ============================================================ */
 const listSubmissions = async (req, res) => {
   try {
@@ -99,12 +99,12 @@ const getSubmissionDetail = async (req, res) => {
 
     const deadlineDays = tender.lastDateOfSubmission
       ? Math.max(
-          0,
-          Math.ceil(
-            (new Date(tender.lastDateOfSubmission).getTime() - Date.now()) /
-              86400000
-          )
+        0,
+        Math.ceil(
+          (new Date(tender.lastDateOfSubmission).getTime() - Date.now()) /
+          86400000
         )
+      )
       : 0;
 
     res.json({
@@ -124,33 +124,47 @@ const getSubmissionDetail = async (req, res) => {
           status: t.status,
         })),
 
-        checklist: buildChecklist(tender, docTasks),
+        // Stored checklist (matches /tenders/manage)
+        checklist: (tender.checklist ?? []).map((c) => ({
+          id: c.id,
+          label: c.label,
+          checked: !!c.checked,
+          isCustom: !!c.isCustom,
+        })),
 
         info: {
           advertisementFile: tender.advertisementFile,
+          advertisementUrl: tender.advertisementUrl ?? "",
           advertisementUploadedBy: tender.advertisementUploadedBy,
+          advertisementUploadedAt: tender.advertisementUploadedAt,
           tenderLink: tender.tenderLink,
           recordedBy: tender.recordedBy,
           tenderType: tender.tenderType,
           responsiblePerson: tender.responsiblePerson,
           lastDateOfPurchase: tender.lastDateOfPurchase
             ? new Date(tender.lastDateOfPurchase).toLocaleDateString("en-GB", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-              })
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })
             : undefined,
           lastDateOfSubmission: tender.lastDateOfSubmission
             ? new Date(tender.lastDateOfSubmission).toLocaleString("en-GB", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
             : undefined,
           note: tender.note,
-          attachments: tender.attachments.map((a) => ({ name: a.name })),
+          attachments: (tender.attachments ?? []).map((a) => ({
+            _id: String(a._id),
+            name: a.name,
+            url: a.url,
+            size: a.size,
+            mimeType: a.mimeType,
+          })),
           eligibility: tender.eligibility,
         },
       },
