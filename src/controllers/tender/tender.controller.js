@@ -1,6 +1,9 @@
 // src/controllers/tender/tender.controller.js
 const Tender = require("../../models/Tender.model");
 const TenderDocumentTask = require("../../models/TenderDocumentTask.model");
+const path = require("path");
+const fs = require("fs");
+const { tenderUploadDir } = require("../../middleware/upload.middleware");
 
 /* ============================================================
  * LIST TENDERS (with filters: stage, tenderType, search)
@@ -388,6 +391,97 @@ const updateChecklist = async (req, res) => {
   }
 };
 
+/* ============================================================
+ * UPLOAD ATTACHMENT
+ * POST /api/v1/tenders/:id/attachments
+ * ============================================================ */
+const uploadAttachment = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
+    }
+
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      // clean up the file we just wrote
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch { }
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    const url = `/uploads/tenders/${req.file.filename}`;
+
+    const attachment = {
+      name: req.file.originalname,
+      url,
+      size: req.file.size,
+      mimeType: req.file.mimetype,
+      uploadedAt: new Date(),
+    };
+
+    tender.attachments.push(attachment);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    // Return the freshly-pushed subdoc (with _id) so the client can
+    // render the new row immediately without a refetch.
+    const created = tender.attachments[tender.attachments.length - 1];
+
+    res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    console.error("uploadAttachment error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * DELETE ATTACHMENT
+ * DELETE /api/v1/tenders/:id/attachments/:attachmentId
+ * ============================================================ */
+const deleteAttachment = async (req, res) => {
+  try {
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    const idx = tender.attachments.findIndex(
+      (a) => String(a._id) === req.params.attachmentId,
+    );
+    if (idx === -1) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Attachment not found" });
+    }
+
+    // best-effort delete from disk
+    try {
+      const fileUrl = tender.attachments[idx].url || "";
+      const filename = path.basename(fileUrl);
+      const full = path.join(tenderUploadDir, filename);
+      if (filename && fs.existsSync(full)) fs.unlinkSync(full);
+    } catch (err) {
+      console.warn("Could not delete file from disk:", err.message);
+    }
+
+    tender.attachments.splice(idx, 1);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({ success: true, message: "Attachment removed" });
+  } catch (error) {
+    console.error("deleteAttachment error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   listTenders,
   getTender,
@@ -398,5 +492,7 @@ module.exports = {
   addDocTask,
   updateDocTask,
   deleteDocTask,
-  updateChecklist
+  updateChecklist,
+  uploadAttachment,
+  deleteAttachment
 };

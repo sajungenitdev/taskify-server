@@ -107,7 +107,8 @@ const directories = [
   { path: path.join(uploadsPath, "voice"), name: "voice" },
   { path: path.join(uploadsPath, "support"), name: "support" },
   { path: path.join(uploadsPath, "backups"), name: "backups" },
-  { path: path.join(uploadsPath, "channels"), name: "channels" }, // For channel avatars
+  { path: path.join(uploadsPath, "channels"), name: "channels" },
+  { path: path.join(uploadsPath, "tenders"), name: "tenders" },   // ← ADD
 ];
 
 for (const dir of directories) {

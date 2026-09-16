@@ -75,6 +75,8 @@ const TenderSchema = new mongoose.Schema(
             {
                 name: { type: String, required: true },
                 url: { type: String, default: "" },
+                size: { type: Number, default: 0 },
+                mimeType: { type: String, default: "" },
                 uploadedAt: { type: Date, default: Date.now },
             },
         ],
