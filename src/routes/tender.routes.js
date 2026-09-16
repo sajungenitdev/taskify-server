@@ -48,6 +48,7 @@ router.post("/", tenderCtrl.createTender);
 router.post("/:id/doc-tasks", tenderCtrl.addDocTask);
 router.patch("/:id/doc-tasks/:taskId", tenderCtrl.updateDocTask);
 router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
+router.patch("/:id/checklist", tenderCtrl.updateChecklist);  // ← add here
 
 /* Now the generic /:id — last */
 router.get("/:id", tenderCtrl.getTender);

@@ -351,6 +351,43 @@ const deleteDocTask = async (req, res) => {
   }
 };
 
+/* ============================================================
+ * UPDATE SUBMISSION CHECKLIST
+ * PATCH /api/v1/tenders/:id/checklist
+ * ============================================================ */
+const updateChecklist = async (req, res) => {
+  try {
+    const { items } = req.body;
+
+    if (!Array.isArray(items)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "items[] is required" });
+    }
+
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    tender.checklist = items.map((it) => ({
+      id: String(it.id),
+      label: String(it.label),
+      checked: !!it.checked,
+      isCustom: !!it.isCustom,
+    }));
+    tender.updatedBy = req.user._id;
+
+    await tender.save();
+    res.json({ success: true, data: tender.checklist });
+  } catch (error) {
+    console.error("updateChecklist error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   listTenders,
   getTender,
@@ -361,4 +398,5 @@ module.exports = {
   addDocTask,
   updateDocTask,
   deleteDocTask,
+  updateChecklist
 };
