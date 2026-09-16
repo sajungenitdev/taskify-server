@@ -5,107 +5,93 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 // ============================================================
-// UPLOAD DIRECTORY CONFIGURATION — CHAT
+// UPLOAD DIRECTORIES
 // ============================================================
 
+// Chat uploads
 const uploadDir = path.join(__dirname, "../uploads/chat");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+fs.mkdirSync(uploadDir, { recursive: true });
 
 const subDirs = ["images", "documents", "audio", "videos", "others"];
 subDirs.forEach((dir) => {
-  const dirPath = path.join(uploadDir, dir);
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
+  fs.mkdirSync(path.join(uploadDir, dir), { recursive: true });
 });
 
-// ============================================================
-// UPLOAD DIRECTORY CONFIGURATION — TENDERS
-// ============================================================
-
+// Tender uploads
 const tenderUploadDir = path.join(__dirname, "../uploads/tenders");
-if (!fs.existsSync(tenderUploadDir)) {
-  fs.mkdirSync(tenderUploadDir, { recursive: true });
-}
+fs.mkdirSync(tenderUploadDir, { recursive: true });
+
+console.log("[upload.middleware] uploadDir:", uploadDir);
+console.log("[upload.middleware] tenderUploadDir:", tenderUploadDir);
 
 // ============================================================
-// FILE FILTER - Allow all common file types
+// FILE FILTER — allow everything
 // ============================================================
 
-const fileFilter = (req, file, cb) => {
-  // Allow everything; unknown types land in "others"
-  cb(null, true);
-};
+const fileFilter = (_req, _file, cb) => cb(null, true);
 
 // ============================================================
-// STORAGE CONFIGURATION — CHAT
+// STORAGE — CHAT
 // ============================================================
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+const chatStorage = multer.diskStorage({
+  destination: (_req, file, cb) => {
     let subDir = "others";
-    const mimeType = file.mimetype;
-
-    if (mimeType.startsWith("image/")) subDir = "images";
-    else if (mimeType.startsWith("audio/")) subDir = "audio";
-    else if (mimeType.startsWith("video/")) subDir = "videos";
+    const mime = file.mimetype;
+    if (mime.startsWith("image/")) subDir = "images";
+    else if (mime.startsWith("audio/")) subDir = "audio";
+    else if (mime.startsWith("video/")) subDir = "videos";
     else if (
-      mimeType === "application/pdf" ||
-      mimeType === "application/msword" ||
-      mimeType.includes("wordprocessingml") ||
-      mimeType === "text/plain" ||
-      mimeType === "text/csv" ||
-      mimeType === "application/rtf"
+      mime === "application/pdf" ||
+      mime === "application/msword" ||
+      mime.includes("wordprocessingml") ||
+      mime === "text/plain" ||
+      mime === "text/csv" ||
+      mime === "application/rtf"
     ) {
       subDir = "documents";
     }
-
-    const destPath = path.join(uploadDir, subDir);
-    if (!fs.existsSync(destPath)) {
-      fs.mkdirSync(destPath, { recursive: true });
-    }
-    cb(null, destPath);
+    const dest = path.join(uploadDir, subDir);
+    fs.mkdirSync(dest, { recursive: true });
+    cb(null, dest);
   },
-  filename: (req, file, cb) => {
-    const uniqueId = crypto.randomBytes(8).toString("hex");
-    const timestamp = Date.now();
-    const extension = path.extname(file.originalname);
-    cb(null, `${timestamp}-${uniqueId}${extension}`);
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}-${id}${ext}`);
   },
 });
 
 // ============================================================
-// STORAGE CONFIGURATION — TENDERS
-//   Files land in uploads/tenders/<timestamp>-<id><ext>
+// STORAGE — TENDERS
 // ============================================================
 
 const tenderStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (!fs.existsSync(tenderUploadDir)) {
-      fs.mkdirSync(tenderUploadDir, { recursive: true });
-    }
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(tenderUploadDir, { recursive: true });
+    console.log("[tenderStorage.destination] →", tenderUploadDir);
     cb(null, tenderUploadDir);
   },
-  filename: (req, file, cb) => {
-    const uniqueId = crypto.randomBytes(8).toString("hex");
-    const timestamp = Date.now();
-    const safeOriginal = path
-      .basename(file.originalname)
-      .replace(/[^\w.\-]+/g, "_");
-    const extension = path.extname(safeOriginal);
-    const base = path.basename(safeOriginal, extension).slice(0, 60);
-    cb(null, `${timestamp}-${uniqueId}-${base}${extension}`);
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 60) || "file";
+    const name = `${Date.now()}-${id}-${base}${ext}`;
+    console.log("[tenderStorage.filename] →", name);
+    cb(null, name);
   },
 });
 
 // ============================================================
-// MULTER CONFIGURATION
+// MULTER INSTANCES
 // ============================================================
 
 const upload = multer({
-  storage,
+  storage: chatStorage,
   limits: { fileSize: 50 * 1024 * 1024, files: 10 },
   fileFilter,
 });
@@ -117,7 +103,7 @@ const tenderUpload = multer({
 });
 
 // ============================================================
-// FILE TYPE + ICON HELPERS (unchanged)
+// HELPERS
 // ============================================================
 
 const getFileType = (mimeType) => {
@@ -125,15 +111,9 @@ const getFileType = (mimeType) => {
   if (mimeType.startsWith("audio/")) return "voice";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType === "application/pdf") return "pdf";
-  if (
-    mimeType === "application/msword" ||
-    mimeType.includes("wordprocessingml")
-  )
+  if (mimeType === "application/msword" || mimeType.includes("wordprocessingml"))
     return "document";
-  if (
-    mimeType === "application/vnd.ms-excel" ||
-    mimeType.includes("spreadsheetml")
-  )
+  if (mimeType === "application/vnd.ms-excel" || mimeType.includes("spreadsheetml"))
     return "spreadsheet";
   if (
     mimeType === "application/vnd.ms-powerpoint" ||
@@ -156,15 +136,9 @@ const getFileIcon = (mimeType) => {
   if (mimeType.startsWith("audio/")) return "audio";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType === "application/pdf") return "pdf";
-  if (
-    mimeType === "application/msword" ||
-    mimeType.includes("wordprocessingml")
-  )
+  if (mimeType === "application/msword" || mimeType.includes("wordprocessingml"))
     return "word";
-  if (
-    mimeType === "application/vnd.ms-excel" ||
-    mimeType.includes("spreadsheetml")
-  )
+  if (mimeType === "application/vnd.ms-excel" || mimeType.includes("spreadsheetml"))
     return "excel";
   if (
     mimeType === "application/vnd.ms-powerpoint" ||
@@ -183,9 +157,9 @@ const getFileIcon = (mimeType) => {
 
 module.exports = {
   upload,
-  tenderUpload,          // ← NEW
-  tenderUploadDir,       // ← NEW (needed by delete handler)
+  tenderUpload,
+  tenderUploadDir,
+  uploadDir,
   getFileType,
   getFileIcon,
-  uploadDir,
 };

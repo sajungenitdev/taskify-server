@@ -12,7 +12,9 @@ const { tenderUpload } = require("../middleware/upload.middleware");
 
 router.use(authenticate);
 
-/* ---------- STATIC ROUTES ---------- */
+/* ============================================================
+ * STATIC ROUTES
+ * ============================================================ */
 router.get("/overview", overviewCtrl.overview);
 router.get("/overview/upcoming", overviewCtrl.upcomingDeadlines);
 
@@ -32,28 +34,53 @@ router.post("/docs", docCtrl.createDoc);
 router.patch("/docs/:id", docCtrl.updateDoc);
 router.delete("/docs/:id", docCtrl.deleteDoc);
 
-/* ---------- TENDER CRUD ---------- */
+/* ============================================================
+ * TENDER CRUD
+ * ============================================================ */
 router.get("/", tenderCtrl.listTenders);
 router.post("/", tenderCtrl.createTender);
 
-/* ---------- SCOPED /:id — MUST come before the generic /:id ---------- */
+/* ============================================================
+ * SCOPED /:id ROUTES — MUST come before the generic /:id
+ * ============================================================ */
+
+/* ---------- DOC TASKS ---------- */
 router.post("/:id/doc-tasks", tenderCtrl.addDocTask);
 router.patch("/:id/doc-tasks/:taskId", tenderCtrl.updateDocTask);
 router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 
+/* ---------- CHECKLIST ---------- */
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
+/* ---------- ATTACHMENTS ---------- */
 router.post(
-  "/:id/attachments",
-  tenderUpload.single("file"),
-  tenderCtrl.uploadAttachment,
-);
-router.delete(
-  "/:id/attachments/:attachmentId",
-  tenderCtrl.deleteAttachment,
+    "/:id/attachments",
+    (req, res, next) => {
+        console.log("\n[route] POST /:id/attachments hit");
+        console.log("[route]   id:", req.params.id);
+        console.log("[route]   content-type:", req.headers["content-type"]);
+        console.log(
+            "[route]   authorization:",
+            req.headers.authorization ? "present" : "MISSING",
+        );
+        next();
+    },
+    tenderUpload.single("file"),
+    (req, res, next) => {
+        console.log("[route] after multer — req.file:", req.file);
+        next();
+    },
+    tenderCtrl.uploadAttachment,
 );
 
-/* ---------- GENERIC /:id — LAST ---------- */
+router.delete(
+    "/:id/attachments/:attachmentId",
+    tenderCtrl.deleteAttachment,
+);
+
+/* ============================================================
+ * GENERIC /:id — LAST
+ * ============================================================ */
 router.get("/:id", tenderCtrl.getTender);
 router.put("/:id", tenderCtrl.updateTender);
 router.patch("/:id/stage", tenderCtrl.changeStage);
