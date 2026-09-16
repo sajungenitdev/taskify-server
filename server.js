@@ -204,6 +204,8 @@ const channelRoutes = require("./src/routes/channel.routes");
 const messageRoutes = require("./src/routes/message.routes");
 const voiceRoutes = require("./src/routes/voice.routes");
 const crmRoutes = require("./src/routes/crm.routes");
+const tenderRoutes = require("./src/routes/tender.routes");
+
 
 // API Routes
 app.use("/api/v1/auth", authRoutes);
@@ -241,6 +243,9 @@ app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/messages", messageRoutes);
 app.use("/api/v1/voice", voiceRoutes);
 app.use("/api/v1/expenses", expenseRoutes);
+
+// ==================== TENDER ROUTES ====================
+app.use("/api/v1/tenders", tenderRoutes);
 
 // ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {

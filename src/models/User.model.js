@@ -69,11 +69,11 @@ const userSchema = new mongoose.Schema(
       default: null,
       index: true,
       set: function (v) {
-        if (v === '' || v === null || v === undefined) {
+        if (v === "" || v === null || v === undefined) {
           return null;
         }
         return v;
-      }
+      },
     },
     position: {
       type: String,
@@ -265,7 +265,7 @@ const userSchema = new mongoose.Schema(
     },
 
     // ============================================================
-    // TRIAL & SUBSCRIPTION - ✅ ADDED
+    // TRIAL & SUBSCRIPTION
     // ============================================================
     trial: {
       isActive: {
@@ -287,7 +287,15 @@ const userSchema = new mongoose.Schema(
       plan: {
         type: String,
         default: "individual",
-        enum: ["individual", "team", "starter", "pro", "business", "enterprise", "free"],
+        enum: [
+          "individual",
+          "team",
+          "starter",
+          "pro",
+          "business",
+          "enterprise",
+          "free",
+        ],
       },
       billingCycle: {
         type: String,
@@ -317,7 +325,15 @@ const userSchema = new mongoose.Schema(
       plan: {
         type: String,
         default: "free",
-        enum: ["free", "individual", "team", "starter", "pro", "business", "enterprise"],
+        enum: [
+          "free",
+          "individual",
+          "team",
+          "starter",
+          "pro",
+          "business",
+          "enterprise",
+        ],
       },
       billingCycle: {
         type: String,
@@ -428,9 +444,10 @@ const userSchema = new mongoose.Schema(
 
 // ============================================================
 // INDEXES
+// NOTE: `email` and `employeeId` already have `unique: true` on their
+// field definitions, which creates those indexes. Do NOT declare them
+// again here — that would trigger a "Duplicate schema index" warning.
 // ============================================================
-userSchema.index({ email: 1 });
-userSchema.index({ employeeId: 1 });
 userSchema.index({ roles: 1 });
 userSchema.index({ department: 1 });
 userSchema.index({ "employment.manager": 1 });
@@ -443,7 +460,7 @@ userSchema.index({ "trial.endDate": 1 });
 // PRE-SAVE MIDDLEWARE
 // ============================================================
 userSchema.pre("save", async function (next) {
-  // ✅ Only hash if password is modified
+  // Only hash if password is modified
   if (!this.isModified("password")) return next();
 
   try {
