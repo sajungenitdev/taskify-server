@@ -25,7 +25,13 @@ const CompanyDocumentSchema = new mongoose.Schema(
       enum: ["View", "Replace"],
       default: "View",
     },
+
+    /* ---------- File fields ---------- */
     fileUrl: { type: String, default: "" },
+    fileName: { type: String, default: "" },      // ← NEW
+    fileSize: { type: Number, default: 0 },       // ← NEW
+    fileMime: { type: String, default: "" },      // ← NEW
+    docType: { type: String, default: "" },       // ← NEW
 
     /* ---------- Experience card fields ---------- */
     subtitle: { type: String, default: "" },

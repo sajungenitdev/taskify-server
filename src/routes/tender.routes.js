@@ -8,9 +8,11 @@ const submissionCtrl = require("../controllers/tender/submission.controller");
 const securityCtrl = require("../controllers/tender/security.controller");
 const docCtrl = require("../controllers/tender/companyDoc.controller");
 const overviewCtrl = require("../controllers/tender/overview.controller");
+
 const {
     tenderUpload,
     advertisementUpload,
+    companyDocUpload,
 } = require("../middleware/upload.middleware");
 
 router.use(authenticate);
@@ -20,8 +22,8 @@ router.use(authenticate);
  * ============================================================ */
 router.get("/overview", overviewCtrl.overview);
 router.get("/overview/upcoming", overviewCtrl.upcomingDeadlines);
-router.get("/overview/performance", overviewCtrl.performance);              // ← NEW
-router.get("/overview/recent-activity", overviewCtrl.recentActivity); 
+router.get("/overview/performance", overviewCtrl.performance);
+router.get("/overview/recent-activity", overviewCtrl.recentActivity);
 
 router.get("/submissions/list", submissionCtrl.listSubmissions);
 router.get("/submissions/:id", submissionCtrl.getSubmissionDetail);
@@ -38,6 +40,13 @@ router.post("/docs/import", docCtrl.importDocsToTender);
 router.post("/docs", docCtrl.createDoc);
 router.patch("/docs/:id", docCtrl.updateDoc);
 router.delete("/docs/:id", docCtrl.deleteDoc);
+
+/* ---------- Company doc file upload ---------- */
+router.post(
+    "/docs/:id/file",
+    companyDocUpload.single("file"),
+    docCtrl.uploadDocFile,
+);
 
 /* ============================================================
  * TENDER CRUD
@@ -57,7 +66,7 @@ router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 /* ---------- CHECKLIST ---------- */
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
-/* ---------- ATTACHMENTS (single block) ---------- */
+/* ---------- ATTACHMENTS ---------- */
 router.post(
     "/:id/attachments",
     tenderUpload.single("file"),
@@ -65,7 +74,7 @@ router.post(
 );
 router.delete("/:id/attachments/:attachmentId", tenderCtrl.deleteAttachment);
 
-/* ---------- ADVERTISEMENT (new) ---------- */
+/* ---------- ADVERTISEMENT ---------- */
 router.post(
     "/:id/advertisement",
     advertisementUpload.single("file"),

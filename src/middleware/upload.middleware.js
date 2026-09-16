@@ -205,12 +205,45 @@ const getFileIcon = (mimeType) => {
   return "file";
 };
 
+// ---------- Company doc uploads ----------
+const companyDocUploadDir = path.join(
+  __dirname,
+  "../../uploads/company-docs",
+);
+fs.mkdirSync(companyDocUploadDir, { recursive: true });
+
+const companyDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(companyDocUploadDir, { recursive: true });
+    cb(null, companyDocUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 60) || "doc";
+    cb(null, `${Date.now()}-${id}-${base}${ext}`);
+  },
+});
+
+const companyDocUpload = multer({
+  storage: companyDocStorage,
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter,
+});
+
+
 module.exports = {
   upload,
   tenderUpload,
   tenderUploadDir,
   advertisementUpload,       // ← NEW
   advertisementUploadDir,    // ← NEW
+  companyDocUpload,
+  companyDocUploadDir,
   uploadDir,
   getFileType,
   getFileIcon,
