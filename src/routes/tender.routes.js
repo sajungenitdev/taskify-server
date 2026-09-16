@@ -20,6 +20,8 @@ router.use(authenticate);
  * ============================================================ */
 router.get("/overview", overviewCtrl.overview);
 router.get("/overview/upcoming", overviewCtrl.upcomingDeadlines);
+router.get("/overview/performance", overviewCtrl.performance);              // ← NEW
+router.get("/overview/recent-activity", overviewCtrl.recentActivity); 
 
 router.get("/submissions/list", submissionCtrl.listSubmissions);
 router.get("/submissions/:id", submissionCtrl.getSubmissionDetail);

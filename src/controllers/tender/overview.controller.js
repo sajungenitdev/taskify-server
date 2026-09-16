@@ -115,4 +115,132 @@ const upcomingDeadlines = async (_req, res) => {
   }
 };
 
-module.exports = { overview, upcomingDeadlines };
+/* ============================================================
+ * PERFORMANCE — last 6 months won vs lost
+ * GET /api/v1/tenders/overview/performance
+ * ============================================================ */
+const performance = async (_req, res) => {
+  try {
+    const now = new Date();
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        start: new Date(d.getFullYear(), d.getMonth(), 1),
+        end: new Date(d.getFullYear(), d.getMonth() + 1, 1),
+        label: d.toLocaleString("en-US", { month: "short" }),
+      });
+    }
+
+    const agg = await Tender.aggregate([
+      {
+        $match: {
+          stage: { $in: ["won", "lost"] },
+          updatedAt: { $gte: months[0].start },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            stage: "$stage",
+            year: { $year: "$updatedAt" },
+            month: { $month: "$updatedAt" },
+          },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const data = months.map((m) => {
+      const year = m.start.getFullYear();
+      const month = m.start.getMonth() + 1;
+      const won =
+        agg.find(
+          (a) => a._id.stage === "won" && a._id.year === year && a._id.month === month
+        )?.count ?? 0;
+      const lost =
+        agg.find(
+          (a) => a._id.stage === "lost" && a._id.year === year && a._id.month === month
+        )?.count ?? 0;
+      return { month: m.label, won, lost };
+    });
+
+    const totalWon = data.reduce((s, d) => s + d.won, 0);
+    const totalLost = data.reduce((s, d) => s + d.lost, 0);
+    const winRate =
+      totalWon + totalLost > 0
+        ? Math.round((totalWon / (totalWon + totalLost)) * 100)
+        : 0;
+
+    res.json({ success: true, data: { data, winRate } });
+  } catch (error) {
+    console.error("performance error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * RECENT ACTIVITY — latest stage changes across tenders
+ * GET /api/v1/tenders/overview/recent-activity?limit=10
+ * ============================================================ */
+const recentActivity = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+
+    const tenders = await Tender.find({})
+      .sort({ updatedAt: -1 })
+      .limit(limit)
+      .select("tenderer title stage updatedAt advertisementFile")
+      .lean();
+
+    const items = tenders.map((t) => {
+      let kind = "uploaded";
+      let message = "";
+
+      if (t.stage === "submitted") {
+        kind = "submitted";
+        message = `${t.title} — submitted, awaiting result`;
+      } else if (t.stage === "won") {
+        kind = "won";
+        message = `${t.title} — won`;
+      } else if (t.stage === "lost") {
+        kind = "lost";
+        message = `${t.title} — lost`;
+      } else if (t.advertisementFile) {
+        kind = "uploaded";
+        message = `${t.title} — advertisement uploaded`;
+      } else {
+        kind = "discussed";
+        message = `${t.title} — under discussion`;
+      }
+
+      return {
+        id: String(t._id),
+        kind,
+        tenderer: t.tenderer,
+        message,
+        timeAgo: timeAgo(t.updatedAt),
+      };
+    });
+
+    res.json({ success: true, data: items });
+  } catch (error) {
+    console.error("recentActivity error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ---------- helper ---------- */
+function timeAgo(date) {
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(date).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+  });
+}
+
+module.exports = { overview, upcomingDeadlines, performance, recentActivity };
