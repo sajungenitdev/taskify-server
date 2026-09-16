@@ -8,12 +8,15 @@ const submissionCtrl = require("../controllers/tender/submission.controller");
 const securityCtrl = require("../controllers/tender/security.controller");
 const docCtrl = require("../controllers/tender/companyDoc.controller");
 const overviewCtrl = require("../controllers/tender/overview.controller");
-const { tenderUpload } = require("../middleware/upload.middleware");
+const {
+    tenderUpload,
+    advertisementUpload,
+} = require("../middleware/upload.middleware");
 
 router.use(authenticate);
 
 /* ============================================================
- * STATIC ROUTES
+ * STATIC ROUTES — before any /:id
  * ============================================================ */
 router.get("/overview", overviewCtrl.overview);
 router.get("/overview/upcoming", overviewCtrl.upcomingDeadlines);
@@ -41,7 +44,7 @@ router.get("/", tenderCtrl.listTenders);
 router.post("/", tenderCtrl.createTender);
 
 /* ============================================================
- * SCOPED /:id ROUTES — MUST come before the generic /:id
+ * SCOPED /:id ROUTES — must come BEFORE the generic /:id
  * ============================================================ */
 
 /* ---------- DOC TASKS ---------- */
@@ -52,31 +55,21 @@ router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 /* ---------- CHECKLIST ---------- */
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
-/* ---------- ATTACHMENTS ---------- */
+/* ---------- ATTACHMENTS (single block) ---------- */
 router.post(
     "/:id/attachments",
-    (req, res, next) => {
-        console.log("\n[route] POST /:id/attachments hit");
-        console.log("[route]   id:", req.params.id);
-        console.log("[route]   content-type:", req.headers["content-type"]);
-        console.log(
-            "[route]   authorization:",
-            req.headers.authorization ? "present" : "MISSING",
-        );
-        next();
-    },
     tenderUpload.single("file"),
-    (req, res, next) => {
-        console.log("[route] after multer — req.file:", req.file);
-        next();
-    },
     tenderCtrl.uploadAttachment,
 );
+router.delete("/:id/attachments/:attachmentId", tenderCtrl.deleteAttachment);
 
-router.delete(
-    "/:id/attachments/:attachmentId",
-    tenderCtrl.deleteAttachment,
+/* ---------- ADVERTISEMENT (new) ---------- */
+router.post(
+    "/:id/advertisement",
+    advertisementUpload.single("file"),
+    tenderCtrl.uploadAdvertisement,
 );
+router.delete("/:id/advertisement", tenderCtrl.deleteAdvertisement);
 
 /* ============================================================
  * GENERIC /:id — LAST

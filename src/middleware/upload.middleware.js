@@ -1,4 +1,4 @@
-// middleware/upload.middleware.js
+// src/middleware/upload.middleware.js
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -6,10 +6,15 @@ const crypto = require("crypto");
 
 // ============================================================
 // UPLOAD DIRECTORIES
+//
+// __dirname = backend/src/middleware
+//   ../../  = backend               ← the backend root
+// Both this file and server.js must point to the SAME folder:
+//   backend/uploads/
 // ============================================================
 
-// Chat uploads
-const uploadDir = path.join(__dirname, "../uploads/chat");
+// ---------- Chat uploads ----------
+const uploadDir = path.join(__dirname, "../../uploads/chat");
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const subDirs = ["images", "documents", "audio", "videos", "others"];
@@ -17,23 +22,33 @@ subDirs.forEach((dir) => {
   fs.mkdirSync(path.join(uploadDir, dir), { recursive: true });
 });
 
-// Tender uploads
-const tenderUploadDir = path.join(__dirname, "../uploads/tenders");
+// ---------- Tender uploads ----------
+const tenderUploadDir = path.join(__dirname, "../../uploads/tenders");
 fs.mkdirSync(tenderUploadDir, { recursive: true });
 
-console.log("[upload.middleware] uploadDir:", uploadDir);
-console.log("[upload.middleware] tenderUploadDir:", tenderUploadDir);
+// ---------- Tender advertisement uploads ----------
+const advertisementUploadDir = path.join(
+  __dirname,
+  "../../uploads/tender-advertisements",
+);
+fs.mkdirSync(advertisementUploadDir, { recursive: true });
+
+// ---------- Boot logs ----------
+console.log("[upload.middleware] uploadDir              :", uploadDir);
+console.log("[upload.middleware] tenderUploadDir        :", tenderUploadDir);
+console.log(
+  "[upload.middleware] advertisementUploadDir :",
+  advertisementUploadDir,
+);
 
 // ============================================================
-// FILE FILTER — allow everything
+// FILE FILTER — allow all types
 // ============================================================
-
 const fileFilter = (_req, _file, cb) => cb(null, true);
 
 // ============================================================
 // STORAGE — CHAT
 // ============================================================
-
 const chatStorage = multer.diskStorage({
   destination: (_req, file, cb) => {
     let subDir = "others";
@@ -57,7 +72,7 @@ const chatStorage = multer.diskStorage({
   },
   filename: (_req, file, cb) => {
     const id = crypto.randomBytes(8).toString("hex");
-    const ext = path.extname(file.originalname);
+    const ext = path.extname(file.originalname) || "";
     cb(null, `${Date.now()}-${id}${ext}`);
   },
 });
@@ -65,7 +80,6 @@ const chatStorage = multer.diskStorage({
 // ============================================================
 // STORAGE — TENDERS
 // ============================================================
-
 const tenderStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     fs.mkdirSync(tenderUploadDir, { recursive: true });
@@ -87,9 +101,28 @@ const tenderStorage = multer.diskStorage({
 });
 
 // ============================================================
+// STORAGE — ADVERTISEMENTS
+// ============================================================
+const advertisementStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(advertisementUploadDir, { recursive: true });
+    cb(null, advertisementUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 60) || "ad";
+    cb(null, `${Date.now()}-${id}-${base}${ext}`);
+  },
+});
+
+// ============================================================
 // MULTER INSTANCES
 // ============================================================
-
 const upload = multer({
   storage: chatStorage,
   limits: { fileSize: 50 * 1024 * 1024, files: 10 },
@@ -102,18 +135,29 @@ const tenderUpload = multer({
   fileFilter,
 });
 
+const advertisementUpload = multer({
+  storage: advertisementStorage,
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+  fileFilter,
+});
+
 // ============================================================
 // HELPERS
 // ============================================================
-
 const getFileType = (mimeType) => {
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("audio/")) return "voice";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType === "application/pdf") return "pdf";
-  if (mimeType === "application/msword" || mimeType.includes("wordprocessingml"))
+  if (
+    mimeType === "application/msword" ||
+    mimeType.includes("wordprocessingml")
+  )
     return "document";
-  if (mimeType === "application/vnd.ms-excel" || mimeType.includes("spreadsheetml"))
+  if (
+    mimeType === "application/vnd.ms-excel" ||
+    mimeType.includes("spreadsheetml")
+  )
     return "spreadsheet";
   if (
     mimeType === "application/vnd.ms-powerpoint" ||
@@ -136,9 +180,15 @@ const getFileIcon = (mimeType) => {
   if (mimeType.startsWith("audio/")) return "audio";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType === "application/pdf") return "pdf";
-  if (mimeType === "application/msword" || mimeType.includes("wordprocessingml"))
+  if (
+    mimeType === "application/msword" ||
+    mimeType.includes("wordprocessingml")
+  )
     return "word";
-  if (mimeType === "application/vnd.ms-excel" || mimeType.includes("spreadsheetml"))
+  if (
+    mimeType === "application/vnd.ms-excel" ||
+    mimeType.includes("spreadsheetml")
+  )
     return "excel";
   if (
     mimeType === "application/vnd.ms-powerpoint" ||
@@ -159,6 +209,8 @@ module.exports = {
   upload,
   tenderUpload,
   tenderUploadDir,
+  advertisementUpload,       // ← NEW
+  advertisementUploadDir,    // ← NEW
   uploadDir,
   getFileType,
   getFileIcon,

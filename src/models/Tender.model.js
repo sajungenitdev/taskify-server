@@ -53,16 +53,23 @@ const TenderSchema = new mongoose.Schema(
 
         /* ---------- SUBMISSION ---------- */
         submitted: { type: Boolean, default: false },
-        mode: { type: String, default: "" }, // "eGP — Online", "Hardcopy Ref."
+        mode: { type: String, default: "" },
         readiness: { type: Number, default: 0, min: 0, max: 100 },
         docStatus: {
             type: String,
-            enum: ["Docs pending", "Docs in progress", "Complete", "Banking docs pending", ""],
+            enum: [
+                "Docs pending",
+                "Docs in progress",
+                "Complete",
+                "Banking docs pending",
+                "",
+            ],
             default: "",
         },
 
         /* ---------- ADVERTISEMENT ---------- */
         advertisementFile: { type: String, default: "" },
+        advertisementUrl: { type: String, default: "" },       // ← NEW
         advertisementUploadedBy: { type: String, default: "" },
         advertisementUploadedAt: { type: Date, default: null },
 
@@ -81,7 +88,7 @@ const TenderSchema = new mongoose.Schema(
             },
         ],
 
-        /* ---------- COMPETITORS (for Submitted tab) ---------- */
+        /* ---------- COMPETITORS ---------- */
         otherParticipants: [
             {
                 bidder: { type: String, required: true },
@@ -89,6 +96,7 @@ const TenderSchema = new mongoose.Schema(
                 isUs: { type: Boolean, default: false },
             },
         ],
+
         /* ---------- SUBMISSION CHECKLIST ---------- */
         checklist: [
             {
@@ -99,7 +107,7 @@ const TenderSchema = new mongoose.Schema(
             },
         ],
 
-        /* ---------- LOSS INFO (for Lost tab) ---------- */
+        /* ---------- LOSS INFO ---------- */
         lossReason: { type: String, default: "" },
         lowestCompliantBidder: { type: String, default: "" },
         lowestCompliantValue: { type: Number, default: 0 },
@@ -129,7 +137,7 @@ const TenderSchema = new mongoose.Schema(
             },
         ],
     },
-    { timestamps: true }
+    { timestamps: true },
 );
 
 TenderSchema.index({ stage: 1, owner: 1 });

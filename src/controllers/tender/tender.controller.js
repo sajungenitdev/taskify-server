@@ -3,7 +3,10 @@ const Tender = require("../../models/Tender.model");
 const TenderDocumentTask = require("../../models/TenderDocumentTask.model");
 const path = require("path");
 const fs = require("fs");
-const { tenderUploadDir } = require("../../middleware/upload.middleware");
+const {
+  tenderUploadDir,
+  advertisementUploadDir,
+} = require("../../middleware/upload.middleware");
 
 /* ============================================================
  * LIST TENDERS
@@ -173,7 +176,9 @@ const updateTender = async (req, res) => {
       "readiness",
       "docStatus",
       "advertisementFile",
+      "advertisementUrl",
       "advertisementUploadedBy",
+      "advertisementUploadedAt",
       "note",
       "eligibility",
       "attachments",
@@ -388,32 +393,17 @@ const updateChecklist = async (req, res) => {
  * ============================================================ */
 const uploadAttachment = async (req, res) => {
   try {
-    console.log("\n========== [uploadAttachment] START ==========");
-    console.log("[uploadAttachment] params.id:", req.params.id);
-    console.log(
-      "[uploadAttachment] content-type:",
-      req.headers["content-type"],
-    );
-    console.log("[uploadAttachment] req.file:", req.file);
-
     if (!req.file) {
-      console.log("[uploadAttachment] ❌ no req.file — multer did not attach");
       return res
         .status(400)
         .json({ success: false, message: "No file uploaded" });
     }
 
-    console.log("[uploadAttachment] ✅ file on disk:", req.file.path);
-    console.log("[uploadAttachment]    size:", req.file.size);
-    console.log("[uploadAttachment]    mime:", req.file.mimetype);
-    console.log("[uploadAttachment]    original:", req.file.originalname);
-
     const tender = await Tender.findById(req.params.id);
     if (!tender) {
-      console.log("[uploadAttachment] ❌ tender not found — cleaning up file");
       try {
         fs.unlinkSync(req.file.path);
-      } catch {}
+      } catch { }
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
@@ -435,13 +425,11 @@ const uploadAttachment = async (req, res) => {
 
     const created = tender.attachments[tender.attachments.length - 1];
 
-    console.log("[uploadAttachment] ✅ saved attachment _id:", created._id);
-    console.log("[uploadAttachment]    url:", created.url);
-    console.log("========== [uploadAttachment] END ==========\n");
+    console.log("[uploadAttachment] ✅ saved:", created._id, "→", created.url);
 
     res.status(201).json({ success: true, data: created });
   } catch (error) {
-    console.error("[uploadAttachment] ❌ error:", error);
+    console.error("uploadAttachment error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -472,7 +460,6 @@ const deleteAttachment = async (req, res) => {
       const fileUrl = tender.attachments[idx].url || "";
       const filename = path.basename(fileUrl);
       const full = path.join(tenderUploadDir, filename);
-      console.log("[deleteAttachment] unlinking:", full);
       if (filename && fs.existsSync(full)) fs.unlinkSync(full);
     } catch (err) {
       console.warn("Could not delete file from disk:", err.message);
@@ -485,6 +472,102 @@ const deleteAttachment = async (req, res) => {
     res.json({ success: true, message: "Attachment removed" });
   } catch (error) {
     console.error("deleteAttachment error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * UPLOAD ADVERTISEMENT
+ * POST /api/v1/tenders/:id/advertisement
+ * ============================================================ */
+const uploadAdvertisement = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
+    }
+
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch { }
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    // Remove old advertisement from disk (best-effort)
+    if (tender.advertisementUrl) {
+      try {
+        const prev = path.basename(tender.advertisementUrl);
+        const full = path.join(advertisementUploadDir, prev);
+        if (fs.existsSync(full)) fs.unlinkSync(full);
+      } catch (err) {
+        console.warn("Could not delete old advertisement:", err.message);
+      }
+    }
+
+    const url = `/uploads/tender-advertisements/${req.file.filename}`;
+
+    tender.advertisementFile = req.file.originalname;
+    tender.advertisementUrl = url;
+    tender.advertisementUploadedBy = `${req.user.fullName} · just now`;
+    tender.advertisementUploadedAt = new Date();
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    console.log("[uploadAdvertisement] ✅ saved:", url);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        advertisementFile: tender.advertisementFile,
+        advertisementUrl: tender.advertisementUrl,
+        advertisementUploadedBy: tender.advertisementUploadedBy,
+        advertisementUploadedAt: tender.advertisementUploadedAt,
+      },
+    });
+  } catch (error) {
+    console.error("uploadAdvertisement error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * DELETE ADVERTISEMENT
+ * DELETE /api/v1/tenders/:id/advertisement
+ * ============================================================ */
+const deleteAdvertisement = async (req, res) => {
+  try {
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    if (tender.advertisementUrl) {
+      try {
+        const prev = path.basename(tender.advertisementUrl);
+        const full = path.join(advertisementUploadDir, prev);
+        if (fs.existsSync(full)) fs.unlinkSync(full);
+      } catch (err) {
+        console.warn("Could not delete advertisement from disk:", err.message);
+      }
+    }
+
+    tender.advertisementFile = "";
+    tender.advertisementUrl = "";
+    tender.advertisementUploadedBy = "";
+    tender.advertisementUploadedAt = null;
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({ success: true, message: "Advertisement removed" });
+  } catch (error) {
+    console.error("deleteAdvertisement error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -502,4 +585,6 @@ module.exports = {
   updateChecklist,
   uploadAttachment,
   deleteAttachment,
+  uploadAdvertisement,
+  deleteAdvertisement,
 };
