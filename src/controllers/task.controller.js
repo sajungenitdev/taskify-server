@@ -3864,9 +3864,7 @@ const getTasksByUser = async (req, res) => {
     if (req.query.projectId) query.projectId = req.query.projectId;
 
     const tasks = await Task.find(query)
-      .select(
-        "_id title description priority status deadline estimatedHours actualMinutes startDate projectId createdAt updatedAt evidenceUrls isMilestone parentTaskId progress subTaskCount completedSubTaskCount"
-      )
+      .select("_id title description priority status deadline estimatedHours actualMinutes startDate projectId createdAt updatedAt evidenceUrls isMilestone parentTaskId progress subTaskCount completedSubTaskCount")
       .populate("assignedTo", "fullName email employeeId")
       .populate("assignedBy", "fullName email")
       .populate("projectId", "name code")
