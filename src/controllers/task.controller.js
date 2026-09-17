@@ -46,6 +46,9 @@ const getTasks = async (req, res) => {
       projectId,
       departmentId,
       projectManagerId,
+      assignedTo,          // 🆕 ADD THIS
+      userId,              // 🆕 alt name
+      assignee,            // 🆕 alt name
       page = 1,
       limit = 20,
       isMilestone,
@@ -61,11 +64,30 @@ const getTasks = async (req, res) => {
       queryParams: req.query
     });
 
-    // ============ ROLE-BASED FILTERING ============
+    // 🆕 EXPLICIT USER FILTER — must come first
+    const targetUserId = assignedTo || userId || assignee;
+    if (targetUserId) {
+      const canViewOthers = [
+        "super_admin",
+        "admin",
+        "hr_manager",
+        "dept_manager",
+        "project_manager",
+        "line_manager",
+      ].includes(user.role);
 
-    // Super Admin, Admin, HR Manager - can see all tasks
-    if (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager") {
-      // No filter - see all tasks
+      if (!canViewOthers && targetUserId !== user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have permission to view this user's tasks",
+        });
+      }
+
+      query.assignedTo = new mongoose.Types.ObjectId(targetUserId);
+      console.log(`🎯 Explicit user filter: assignedTo = ${targetUserId}`);
+    }
+    // ============ ROLE-BASED FILTERING ============
+    else if (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager") {
       console.log("👑 Admin role - seeing all tasks");
     }
     // ============ PROJECT MANAGER - Show department tasks ============
@@ -3804,6 +3826,75 @@ const reorderSingleTask = async (req, res) => {
   }
 };
 // ============================================================
+// 🆕 GET TASKS BY USER (for admin/manager reports)
+// ============================================================
+const getTasksByUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = req.user;
+
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid userId is required",
+      });
+    }
+
+    // Permission: only admins/managers can look up another user's tasks.
+    // Anyone can look up their own.
+    const isSelf = userId === user._id.toString();
+    const canViewOthers = [
+      "super_admin",
+      "admin",
+      "hr_manager",
+      "dept_manager",
+      "project_manager",
+      "line_manager",
+    ].includes(user.role);
+
+    if (!isSelf && !canViewOthers) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to view this user's tasks",
+      });
+    }
+
+    const query = { assignedTo: userId };
+    if (req.query.status) query.status = req.query.status;
+    if (req.query.projectId) query.projectId = req.query.projectId;
+
+    const tasks = await Task.find(query)
+      .select(
+        "_id title description priority status deadline estimatedHours actualMinutes startDate projectId createdAt updatedAt evidenceUrls isMilestone parentTaskId progress subTaskCount completedSubTaskCount"
+      )
+      .populate("assignedTo", "fullName email employeeId")
+      .populate("assignedBy", "fullName email")
+      .populate("projectId", "name code")
+      .populate("parentTaskId", "title status")
+      .sort({ startDate: 1, createdAt: 1 })
+      .lean();
+
+    // Also fetch the user info so the frontend has it in one call
+    const targetUser = await User.findById(userId)
+      .select("fullName email employeeId position department role")
+      .populate("department", "name code")
+      .lean();
+
+    res.json({
+      success: true,
+      data: tasks,
+      user: targetUser,
+      count: tasks.length,
+    });
+  } catch (error) {
+    console.error("❌ getTasksByUser error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error: " + error.message,
+    });
+  }
+};
+// ============================================================
 // EXPORT ALL CONTROLLERS
 // ============================================================
 module.exports = {
@@ -3845,5 +3936,6 @@ module.exports = {
   getDependencyChain,
   updateDependencyType,
   getDependencyStatistics,
-  reorderSingleTask
+  reorderSingleTask,
+  getTasksByUser
 };

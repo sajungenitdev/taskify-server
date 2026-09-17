@@ -38,6 +38,7 @@ const {
   getDependencyStatistics,
   reorderSingleTask,
   getTaskTime,
+  getTasksByUser,
 } = require("../controllers/task.controller");
 const { authenticate, requireRole } = require("../middleware/auth.middleware");
 const {
@@ -68,11 +69,10 @@ const router = express.Router();
 // ============================================================
 router.use(authenticate);
 
-// ============================================================
 // EMPLOYEE ROUTES - Must come before /:id routes
-// ============================================================
 router.get("/my-tasks", getMyTasks);
 router.get("/my-statistics", getTaskStatistics);
+router.get("/user/:userId", getTasksByUser);
 
 // ============================================================
 // TASK OPERATIONS
@@ -84,10 +84,6 @@ router.get("/", getTasks);
 // ============================================================
 router.get("/project/:projectId", getTasksByProject);
 router.get("/project/:projectId/summary", getProjectTasksSummary);
-
-// ============================================================
-// 🆕 MILESTONE ROUTES
-// ============================================================
 router.get("/project/:projectId/milestones", authenticate, getMilestones);
 
 // ============================================================
@@ -102,13 +98,12 @@ router.get("/:id/hierarchy", authenticate, getTaskHierarchy);
 
 // Get dependency statistics
 router.get("/dependencies/statistics", authenticate, getDependencyStatistics);
-
-// Get project dependency graph
 router.get(
   "/project/:projectId/dependencies/graph",
   authenticate,
   getProjectDependencyGraph
 );
+
 
 // Get dependency chain for a task
 router.get("/:id/dependencies/chain", authenticate, getDependencyChain);
