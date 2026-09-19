@@ -47,6 +47,8 @@ router.post(
     companyDocUpload.single("file"),
     docCtrl.uploadDocFile,
 );
+/* ---------- Company doc: renew ---------- */
+router.post("/docs/:id/renew", docCtrl.renewDoc);
 
 /* ============================================================
  * TENDER CRUD

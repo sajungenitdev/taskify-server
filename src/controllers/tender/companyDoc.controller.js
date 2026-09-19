@@ -7,11 +7,20 @@ const {
 } = require("../../middleware/upload.middleware");
 
 /* ============================================================
+ * HELPERS
+ * ============================================================ */
+function toDate(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* ============================================================
  * LIST — filter by category + optional filters on experience
  * ============================================================ */
 const listDocs = async (req, res) => {
   try {
-    const { category, sector, duration, volume } = req.query;
+    const { category, sector, duration, volume, status } = req.query;
 
     const query = {};
     if (category && category !== "all") query.category = category;
@@ -27,6 +36,13 @@ const listDocs = async (req, res) => {
       query.chips = query.chips
         ? { $all: [query.chips, volume] }
         : volume;
+    }
+
+    // Status filter (?status=expired|expiring|valid)
+    if (status && status !== "all") {
+      if (status === "expired") query.status = "Expired";
+      else if (status === "expiring") query.status = "Expiring Soon";
+      else if (status === "valid") query.status = "Valid";
     }
 
     const rows = await CompanyDocument.find(query)
@@ -74,9 +90,10 @@ const createDoc = async (req, res) => {
       title,
       reference,
       validity,
+      validityDate,     // ISO string → saved as `validUntil`
+      issuedOn,         // ISO string
       subtitle,
       chips,
-      status,
       fileUrl,
       docType,
     } = req.body;
@@ -92,10 +109,11 @@ const createDoc = async (req, res) => {
       title: title.trim(),
       reference: reference || "",
       validity: validity || "",
+      validUntil: toDate(validityDate),      // ← saved as Date
+      issuedOn: toDate(issuedOn),
       subtitle: subtitle || "",
       chips: Array.isArray(chips) ? chips : [],
-      status: status || "Valid",
-      action: "View",
+      // status and action are computed by the pre-save hook
       fileUrl: fileUrl || "",
       docType: docType || "",
       createdBy: req.user._id,
@@ -127,20 +145,65 @@ const updateDoc = async (req, res) => {
       "validity",
       "subtitle",
       "chips",
-      "status",
-      "action",
       "fileUrl",
       "docType",
     ];
     for (const k of allowed) {
       if (req.body[k] !== undefined) doc[k] = req.body[k];
     }
+
+    // The two date fields must be translated to Date objects
+    if (req.body.validityDate !== undefined) {
+      doc.validUntil = toDate(req.body.validityDate);
+    }
+    if (req.body.issuedOn !== undefined) {
+      doc.issuedOn = toDate(req.body.issuedOn);
+    }
+
     doc.updatedBy = req.user._id;
+    // status + action are recomputed by the pre-save hook
     await doc.save();
 
     res.json({ success: true, data: doc });
   } catch (error) {
     console.error("updateDoc error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * RENEW — reset a document's validity + optionally replace file
+ * POST /api/v1/tenders/docs/:id/renew
+ * Body: { validityDate: ISO string, issuedOn?: ISO string, note?: string }
+ * ============================================================ */
+const renewDoc = async (req, res) => {
+  try {
+    const { validityDate, issuedOn } = req.body;
+
+    if (!validityDate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "validityDate is required" });
+    }
+
+    const doc = await CompanyDocument.findById(req.params.id);
+    if (!doc) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Document not found" });
+    }
+
+    doc.validUntil = toDate(validityDate);
+    if (issuedOn !== undefined) doc.issuedOn = toDate(issuedOn);
+    // The pre-save hook will flip status back to Valid/Expiring/Expired
+    // and reset action accordingly.
+    doc.updatedBy = req.user._id;
+
+    await doc.save();
+
+    res.json({ success: true, data: doc });
+  } catch (error) {
+    console.error("renewDoc error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -157,7 +220,6 @@ const deleteDoc = async (req, res) => {
         .json({ success: false, message: "Document not found" });
     }
 
-    // Remove attached file from disk (best-effort)
     if (doc.fileUrl) {
       try {
         const prev = path.basename(doc.fileUrl);
@@ -200,7 +262,7 @@ const importDocsToTender = async (req, res) => {
             importedBy: req.user._id,
           },
         },
-      }
+      },
     );
 
     res.json({
@@ -229,13 +291,12 @@ const uploadDocFile = async (req, res) => {
     if (!doc) {
       try {
         fs.unlinkSync(req.file.path);
-      } catch { }
+      } catch {}
       return res
         .status(404)
         .json({ success: false, message: "Document not found" });
     }
 
-    // Remove previous file (best-effort)
     if (doc.fileUrl) {
       try {
         const prev = path.basename(doc.fileUrl);
@@ -267,6 +328,7 @@ module.exports = {
   docCounts,
   createDoc,
   updateDoc,
+  renewDoc,        // ← NEW
   deleteDoc,
   importDocsToTender,
   uploadDocFile,
