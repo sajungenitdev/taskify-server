@@ -15,6 +15,33 @@ function toDate(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+/* Compute status + action from validUntil — always fresh */
+function computeStatus(doc) {
+  if (!doc.validUntil) {
+    // No expiry — leave status as-is (default "Valid"), action "View"
+    return {
+      ...doc,
+      status: doc.status || "Valid",
+      action: doc.action === "Renew" ? "View" : doc.action || "View",
+    };
+  }
+  const now = Date.now();
+  const diffDays = Math.ceil(
+    (new Date(doc.validUntil).getTime() - now) / 86400000,
+  );
+  if (diffDays < 0) {
+    return { ...doc, status: "Expired", action: "Renew" };
+  }
+  if (diffDays <= 30) {
+    return { ...doc, status: "Expiring Soon", action: "Renew" };
+  }
+  return {
+    ...doc,
+    status: "Valid",
+    action: doc.action === "Renew" ? "View" : doc.action || "View",
+  };
+}
+
 /* ============================================================
  * LIST — filter by category + optional filters on experience
  * ============================================================ */
@@ -33,18 +60,25 @@ const listDocs = async (req, res) => {
     if (chipFilters.length === 1) query.chips = chipFilters[0];
     else if (chipFilters.length > 1) query.chips = { $all: chipFilters };
 
-    // Status filter (?status=expired|expiring|valid)
-    if (status && status !== "all") {
-      if (status === "expired") query.status = "Expired";
-      else if (status === "expiring") query.status = "Expiring Soon";
-      else if (status === "valid") query.status = "Valid";
-    }
-
     const rows = await CompanyDocument.find(query)
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ success: true, data: rows });
+    // Recompute status/action on every read
+    let enriched = rows.map(computeStatus);
+
+    // Apply status filter AFTER recompute (so it reflects live values)
+    if (status && status !== "all") {
+      const map = {
+        expired: "Expired",
+        expiring: "Expiring Soon",
+        valid: "Valid",
+      };
+      const target = map[status];
+      if (target) enriched = enriched.filter((d) => d.status === target);
+    }
+
+    res.json({ success: true, data: enriched });
   } catch (error) {
     console.error("listDocs error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -56,18 +90,11 @@ const listDocs = async (req, res) => {
  * ============================================================ */
 const docCounts = async (_req, res) => {
   try {
-    const agg = await CompanyDocument.aggregate([
-      { $group: { _id: "$category", count: { $sum: 1 } } },
-    ]);
-
-    const counts = {
-      legal: 0,
-      profiles: 0,
-      experience: 0,
-      certificates: 0,
-    };
-    for (const r of agg) counts[r._id] = r.count;
-
+    const rows = await CompanyDocument.find({}).lean();
+    const counts = { legal: 0, profiles: 0, experience: 0, certificates: 0 };
+    for (const r of rows) {
+      if (counts[r.category] !== undefined) counts[r.category] += 1;
+    }
     res.json({ success: true, data: counts });
   } catch (error) {
     console.error("docCounts error:", error);
@@ -85,8 +112,8 @@ const createDoc = async (req, res) => {
       title,
       reference,
       validity,
-      validityDate,     // ISO string → saved as `validUntil`
-      issuedOn,         // ISO string
+      validityDate,
+      issuedOn,
       subtitle,
       chips,
       fileUrl,
@@ -104,18 +131,18 @@ const createDoc = async (req, res) => {
       title: title.trim(),
       reference: reference || "",
       validity: validity || "",
-      validUntil: toDate(validityDate),      // ← saved as Date
+      validUntil: toDate(validityDate),
       issuedOn: toDate(issuedOn),
       subtitle: subtitle || "",
       chips: Array.isArray(chips) ? chips : [],
-      // status and action are computed by the pre-save hook
       fileUrl: fileUrl || "",
       docType: docType || "",
       createdBy: req.user._id,
       updatedBy: req.user._id,
     });
 
-    res.status(201).json({ success: true, data: doc });
+    const obj = doc.toObject();
+    res.status(201).json({ success: true, data: computeStatus(obj) });
   } catch (error) {
     console.error("createDoc error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -147,7 +174,6 @@ const updateDoc = async (req, res) => {
       if (req.body[k] !== undefined) doc[k] = req.body[k];
     }
 
-    // The two date fields must be translated to Date objects
     if (req.body.validityDate !== undefined) {
       doc.validUntil = toDate(req.body.validityDate);
     }
@@ -156,10 +182,10 @@ const updateDoc = async (req, res) => {
     }
 
     doc.updatedBy = req.user._id;
-    // status + action are recomputed by the pre-save hook
     await doc.save();
 
-    res.json({ success: true, data: doc });
+    const obj = doc.toObject();
+    res.json({ success: true, data: computeStatus(obj) });
   } catch (error) {
     console.error("updateDoc error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -167,9 +193,7 @@ const updateDoc = async (req, res) => {
 };
 
 /* ============================================================
- * RENEW — reset a document's validity + optionally replace file
- * POST /api/v1/tenders/docs/:id/renew
- * Body: { validityDate: ISO string, issuedOn?: ISO string, note?: string }
+ * RENEW
  * ============================================================ */
 const renewDoc = async (req, res) => {
   try {
@@ -190,13 +214,11 @@ const renewDoc = async (req, res) => {
 
     doc.validUntil = toDate(validityDate);
     if (issuedOn !== undefined) doc.issuedOn = toDate(issuedOn);
-    // The pre-save hook will flip status back to Valid/Expiring/Expired
-    // and reset action accordingly.
     doc.updatedBy = req.user._id;
-
     await doc.save();
 
-    res.json({ success: true, data: doc });
+    const obj = doc.toObject();
+    res.json({ success: true, data: computeStatus(obj) });
   } catch (error) {
     console.error("renewDoc error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -272,7 +294,6 @@ const importDocsToTender = async (req, res) => {
 
 /* ============================================================
  * UPLOAD A FILE FOR AN EXISTING COMPANY DOC
- * POST /api/v1/tenders/docs/:id/file
  * ============================================================ */
 const uploadDocFile = async (req, res) => {
   try {
@@ -311,7 +332,8 @@ const uploadDocFile = async (req, res) => {
 
     console.log("[uploadDocFile] ✅ saved:", doc.fileUrl);
 
-    res.status(201).json({ success: true, data: doc });
+    const obj = doc.toObject();
+    res.status(201).json({ success: true, data: computeStatus(obj) });
   } catch (error) {
     console.error("uploadDocFile error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -323,7 +345,7 @@ module.exports = {
   docCounts,
   createDoc,
   updateDoc,
-  renewDoc,        // ← NEW
+  renewDoc,
   deleteDoc,
   importDocsToTender,
   uploadDocFile,
