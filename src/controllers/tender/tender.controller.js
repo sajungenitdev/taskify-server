@@ -13,11 +13,20 @@ const {
  * ============================================================ */
 const listTenders = async (req, res) => {
   try {
-    const { stage, tenderType, search, page = 1, limit = 100 } = req.query;
+    const {
+      stage,
+      tenderType,
+      search,
+      includeDrafts,
+      page = 1,
+      limit = 100,
+    } = req.query;
 
     const query = {};
     if (stage && stage !== "all") query.stage = stage;
     if (tenderType && tenderType !== "all") query.tenderType = tenderType;
+    // By default, exclude drafts unless includeDrafts=true
+    if (includeDrafts !== "true") query.draft = { $ne: true };
     if (search) {
       query.$or = [
         { tenderer: { $regex: search, $options: "i" } },
@@ -97,9 +106,13 @@ const createTender = async (req, res) => {
       tentativeBudget,
       currency,
       tenderSecurityAmount,
+      tenderSecurityValidity,        // ← NEW
+      performanceSecurityAmount,     // ← NEW
+      performanceSecurityValidity,   // ← NEW
       mode,
       note,
       eligibility,
+      draft,                         // ← NEW
     } = req.body;
 
     if (!tenderer?.trim() || !title?.trim()) {
@@ -108,24 +121,30 @@ const createTender = async (req, res) => {
         .json({ success: false, message: "tenderer and title are required" });
     }
 
+    const toDate = (v) => {
+      if (!v) return null;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
     const tender = await Tender.create({
       tenderer: tenderer.trim(),
       title: title.trim(),
       stage,
+      draft: !!draft,
       tenderType: tenderType || "eGP",
       description: description || "",
       tenderLink: tenderLink || "",
       recordedBy: recordedBy || req.user.fullName || "",
       responsiblePerson: responsiblePerson || "",
-      lastDateOfPurchase: lastDateOfPurchase
-        ? new Date(lastDateOfPurchase)
-        : null,
-      lastDateOfSubmission: lastDateOfSubmission
-        ? new Date(lastDateOfSubmission)
-        : null,
+      lastDateOfPurchase: toDate(lastDateOfPurchase),
+      lastDateOfSubmission: toDate(lastDateOfSubmission),
       tentativeBudget: Number(tentativeBudget) || 0,
       currency: currency || "BDT",
       tenderSecurityAmount: Number(tenderSecurityAmount) || 0,
+      tenderSecurityValidity: toDate(tenderSecurityValidity),
+      performanceSecurityAmount: Number(performanceSecurityAmount) || 0,
+      performanceSecurityValidity: toDate(performanceSecurityValidity),
       mode: mode || "",
       note: note || "",
       eligibility: eligibility || "",
@@ -160,6 +179,7 @@ const updateTender = async (req, res) => {
     const allowed = [
       "tenderer",
       "title",
+      "draft",                       // ← NEW
       "tenderType",
       "description",
       "tenderLink",
@@ -170,7 +190,9 @@ const updateTender = async (req, res) => {
       "tentativeBudget",
       "currency",
       "tenderSecurityAmount",
+      "tenderSecurityValidity",      // ← NEW
       "performanceSecurityAmount",
+      "performanceSecurityValidity", // ← NEW
       "securityMode",
       "mode",
       "readiness",
@@ -389,7 +411,6 @@ const updateChecklist = async (req, res) => {
 
 /* ============================================================
  * UPLOAD ATTACHMENT
- * POST /api/v1/tenders/:id/attachments
  * ============================================================ */
 const uploadAttachment = async (req, res) => {
   try {
@@ -403,7 +424,7 @@ const uploadAttachment = async (req, res) => {
     if (!tender) {
       try {
         fs.unlinkSync(req.file.path);
-      } catch { }
+      } catch {}
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
@@ -436,7 +457,6 @@ const uploadAttachment = async (req, res) => {
 
 /* ============================================================
  * DELETE ATTACHMENT
- * DELETE /api/v1/tenders/:id/attachments/:attachmentId
  * ============================================================ */
 const deleteAttachment = async (req, res) => {
   try {
@@ -478,7 +498,6 @@ const deleteAttachment = async (req, res) => {
 
 /* ============================================================
  * UPLOAD ADVERTISEMENT
- * POST /api/v1/tenders/:id/advertisement
  * ============================================================ */
 const uploadAdvertisement = async (req, res) => {
   try {
@@ -492,13 +511,12 @@ const uploadAdvertisement = async (req, res) => {
     if (!tender) {
       try {
         fs.unlinkSync(req.file.path);
-      } catch { }
+      } catch {}
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
     }
 
-    // Remove old advertisement from disk (best-effort)
     if (tender.advertisementUrl) {
       try {
         const prev = path.basename(tender.advertisementUrl);
@@ -537,7 +555,6 @@ const uploadAdvertisement = async (req, res) => {
 
 /* ============================================================
  * DELETE ADVERTISEMENT
- * DELETE /api/v1/tenders/:id/advertisement
  * ============================================================ */
 const deleteAdvertisement = async (req, res) => {
   try {
