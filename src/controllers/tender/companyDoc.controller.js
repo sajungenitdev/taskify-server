@@ -25,18 +25,13 @@ const listDocs = async (req, res) => {
     const query = {};
     if (category && category !== "all") query.category = category;
 
-    // Experience-tab chip filters
-    if (sector && sector !== "all") query.chips = sector;
-    if (duration && duration !== "all") {
-      query.chips = query.chips
-        ? { $all: [query.chips, duration] }
-        : duration;
-    }
-    if (volume && volume !== "all") {
-      query.chips = query.chips
-        ? { $all: [query.chips, volume] }
-        : volume;
-    }
+    const chipFilters = [];
+    if (sector && sector !== "all") chipFilters.push(sector);
+    if (duration && duration !== "all") chipFilters.push(duration);
+    if (volume && volume !== "all") chipFilters.push(volume);
+
+    if (chipFilters.length === 1) query.chips = chipFilters[0];
+    else if (chipFilters.length > 1) query.chips = { $all: chipFilters };
 
     // Status filter (?status=expired|expiring|valid)
     if (status && status !== "all") {
@@ -291,7 +286,7 @@ const uploadDocFile = async (req, res) => {
     if (!doc) {
       try {
         fs.unlinkSync(req.file.path);
-      } catch {}
+      } catch { }
       return res
         .status(404)
         .json({ success: false, message: "Document not found" });
