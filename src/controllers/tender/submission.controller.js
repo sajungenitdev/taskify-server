@@ -121,16 +121,12 @@ const getSubmissionDetail = async (req, res) => {
           title: t.title,
           owner: t.owner,
           fileName: t.fileName,
+          fileUrl: t.fileUrl ?? "",       
           status: t.status,
         })),
 
         // Stored checklist (matches /tenders/manage)
-        checklist: (tender.checklist ?? []).map((c) => ({
-          id: c.id,
-          label: c.label,
-          checked: !!c.checked,
-          isCustom: !!c.isCustom,
-        })),
+        checklist: buildChecklist(tender, docTasks),
 
         info: {
           advertisementFile: tender.advertisementFile,
