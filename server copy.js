@@ -1,9 +1,9 @@
 // server.js
 // ==================== DNS OVERRIDE FOR MONGODB SRV ====================
+// Force Node.js to use public DNS servers to resolve MongoDB Atlas SRV cluster records
 const dns = require("dns");
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-/* ---- Core dependencies ---- */
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -15,25 +15,20 @@ const rateLimit = require("express-rate-limit");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
-const cron = require("node-cron");
 
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
 
-// ==================== CRON IMPORTS (TOP OF FILE) ====================
-const TenderSettings = require("./src/models/TenderSettings.model");
-const { runCrawlInternal } = require("./src/services/crawlScheduler.service");
-
-// ==================== SOCKET.IO ====================
+// ==================== SOCKET.IO INITIALIZATION ====================
 const { initializeSocket } = require("./src/socket/index");
 const io = initializeSocket(server);
 app.set("io", io);
 
 // ==================== RATE LIMITING ====================
 const limiter = rateLimit({
-  windowMs: 60 * 1000,
+  windowMs: 60 * 1000, // 1 minute
   max: process.env.NODE_ENV === "production" ? 100 : 1000,
   message: {
     success: false,
@@ -90,6 +85,7 @@ app.use(
   }),
 );
 
+// Handle preflight requests
 app.options("*", cors());
 
 app.use(compression());
@@ -102,6 +98,7 @@ app.use(limiter);
 const uploadsPath = path.join(__dirname, "uploads");
 console.log(`📁 Uploads directory: ${uploadsPath}`);
 
+// Create upload directories
 const directories = [
   { path: uploadsPath, name: "uploads" },
   { path: path.join(uploadsPath, "tasks"), name: "tasks" },
@@ -111,7 +108,7 @@ const directories = [
   { path: path.join(uploadsPath, "support"), name: "support" },
   { path: path.join(uploadsPath, "backups"), name: "backups" },
   { path: path.join(uploadsPath, "channels"), name: "channels" },
-  { path: path.join(uploadsPath, "tenders"), name: "tenders" },
+  { path: path.join(uploadsPath, "tenders"), name: "tenders" },   // ← ADD
 ];
 
 for (const dir of directories) {
@@ -121,45 +118,53 @@ for (const dir of directories) {
   }
 }
 
+// Serve static files
 app.use(
   "/uploads",
   express.static(uploadsPath, {
     setHeaders: (res, filePath) => {
       const ext = path.extname(filePath).toLowerCase();
       const mimeTypes = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".svg": "image/svg+xml",
-        ".ico": "image/x-icon",
-        ".webm": "audio/webm",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.webm': 'audio/webm',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
       };
       if (mimeTypes[ext]) {
-        res.setHeader("Content-Type", mimeTypes[ext]);
+        res.setHeader('Content-Type', mimeTypes[ext]);
       }
       res.setHeader("Cache-Control", "public, max-age=31536000");
     },
   }),
 );
 
-// ==================== TEST ENDPOINT ====================
+// ==================== TEST ENDPOINTS ====================
 app.get("/test-uploads", (req, res) => {
   try {
     const tasksPath = path.join(uploadsPath, "tasks");
     const files = fs.existsSync(tasksPath) ? fs.readdirSync(tasksPath) : [];
     res.json({
       success: true,
-      uploadsPath,
-      tasksPath,
+      message: "Uploads directory is accessible",
+      uploadsPath: uploadsPath,
+      tasksPath: tasksPath,
       filesCount: files.length,
       files: files.slice(0, 20),
+      staticUrl: "/uploads/tasks/",
+      serverUrl: `${req.protocol}://${req.get("host")}`,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      uploadsPath: uploadsPath,
+    });
   }
 });
 
@@ -195,12 +200,15 @@ const timerRoutes = require("./src/routes/timer.routes");
 const feedbackRoutes = require("./src/routes/feedback.routes");
 const expenseRoutes = require("./src/routes/expense.routes");
 
+// ==================== CHAT ROUTES ====================
 const channelRoutes = require("./src/routes/channel.routes");
 const messageRoutes = require("./src/routes/message.routes");
 const voiceRoutes = require("./src/routes/voice.routes");
 const crmRoutes = require("./src/routes/crm.routes");
 const tenderRoutes = require("./src/routes/tender.routes");
 
+
+// API Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/departments", departmentRoutes);
@@ -230,13 +238,17 @@ app.use("/api/v1/pricing-plans", pricingPlanRoutes);
 app.use("/api/v1/timer", timerRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 app.use("/api/v1/crm", crmRoutes);
+
+// ==================== CHAT ROUTES ====================
 app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/messages", messageRoutes);
 app.use("/api/v1/voice", voiceRoutes);
 app.use("/api/v1/expenses", expenseRoutes);
+
+// ==================== TENDER ROUTES ====================
 app.use("/api/v1/tenders", tenderRoutes);
 
-// ==================== HEALTH ====================
+// ==================== HEALTH CHECK ====================
 app.get("/health", (req, res) => {
   res.json({
     success: true,
@@ -245,56 +257,96 @@ app.get("/health", (req, res) => {
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
     mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+    uploadsDir: fs.existsSync(uploadsPath),
     socketio: io ? "Initialized" : "Not initialized",
+    endpoints: {
+      tasks: "/api/v1/tasks",
+      projects: "/api/v1/projects",
+      resources: "/api/v1/resources",
+      templates: "/api/v1/templates",
+      departments: "/api/v1/departments",
+      auth: "/api/v1/auth",
+      users: "/api/v1/users",
+      leaves: "/api/v1/leaves",
+      channels: "/api/v1/channels",
+      messages: "/api/v1/messages",
+      voice: "/api/v1/voice",
+      testUploads: "/test-uploads",
+    },
   });
 });
 
-// ==================== ROOT ====================
+// ==================== ROOT ENDPOINT ====================
 app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "Enterprise Task Management API",
     version: "1.0.0",
+    environment: process.env.NODE_ENV || "development",
+    endpoints: {
+      auth: "/api/v1/auth",
+      users: "/api/v1/users",
+      departments: "/api/v1/departments",
+      tasks: "/api/v1/tasks",
+      projects: "/api/v1/projects",
+      resources: "/api/v1/resources",
+      templates: "/api/v1/templates",
+      leaves: "/api/v1/leaves",
+      channels: "/api/v1/channels",
+      messages: "/api/v1/messages",
+      voice: "/api/v1/voice",
+      health: "/health",
+      testUploads: "/test-uploads",
+    },
   });
 });
 
-// ==================== DEBUG ====================
+// ==================== DEBUG ROUTE ====================
 const { User } = require("./src/models/User.model");
 
-app.get(
-  "/api/debug/users",
-  authenticate,
-  requireRole("super_admin", "admin"),
-  async (req, res) => {
-    try {
-      const users = await User.find().select("email fullName role");
-      res.json({ success: true, data: users, count: users.length });
-    } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
-    }
-  },
-);
+app.get("/api/debug/users", authenticate, requireRole("super_admin", "admin"), async (req, res) => {
+  try {
+    const users = await User.find().select("email fullName trial subscription createdAt");
+    res.json({
+      success: true,
+      data: users,
+      count: users.length
+    });
+  } catch (error) {
+    console.error("Debug users error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
 
-// ==================== 404 ====================
+// ==================== 404 HANDLER ====================
 app.use((req, res) => {
   res.status(404).json({
     success: false,
     message: `Cannot ${req.method} ${req.url}`,
+    timestamp: new Date().toISOString(),
   });
 });
 
-// ==================== GLOBAL ERROR ====================
+// ==================== GLOBAL ERROR HANDLER ====================
 app.use((err, req, res, next) => {
   console.error("❌ Error:", err.message);
+  console.error("📚 Stack:", err.stack);
+
   const statusCode = err.status || 500;
+  const message = err.message || "Internal server error";
+
   res.status(statusCode).json({
     success: false,
-    message: err.message || "Internal server error",
+    message: message,
+    timestamp: new Date().toISOString(),
     ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
   });
 });
 
-// ==================== DATABASE ====================
+// ==================== DATABASE CONNECTION ====================
 const connectDB = async (retries = 5, delay = 5000) => {
   try {
     await mongoose.connect(process.env.MONGODB_URI);
@@ -303,42 +355,13 @@ const connectDB = async (retries = 5, delay = 5000) => {
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error.message);
     if (retries > 0) {
-      console.log(`Retrying in ${delay / 1000}s... (${retries} left)`);
+      console.log(`Retrying in ${delay / 1000} seconds... (${retries} retries left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return connectDB(retries - 1, delay);
     }
     return false;
   }
 };
-
-// ==================== CRON (defined as function, not executed here) ====================
-let lastRunKey = "";
-
-function startCrawlCron() {
-  cron.schedule("* * * * *", async () => {
-    try {
-      const settings = await TenderSettings.findOne().lean();
-      const target = settings?.crawlTime || "06:00";
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
-      const current = `${hh}:${mm}`;
-
-      if (current !== target) return;
-      if (lastRunKey === current) return;
-      lastRunKey = current;
-
-      console.log(`[cron] running scheduled tender crawl at ${current}`);
-      const result = await runCrawlInternal({ userId: null });
-      console.log(
-        `[cron] done — sites=${result.sitesChecked} new=${result.newFound} matched=${result.matched}`,
-      );
-    } catch (err) {
-      console.error("[cron] crawl failed:", err.message);
-    }
-  });
-  console.log("✅ Cron scheduler started (daily tender crawl)");
-}
 
 // ==================== START SERVER ====================
 const PORT = process.env.PORT || 5000;
@@ -354,15 +377,14 @@ const startServer = async () => {
     console.log("\n⚠️  Server starting without database connection");
   }
 
+  // Log uploads directory status
   console.log(`\n📁 Uploads directory: ${uploadsPath}`);
   console.log(`📁 Uploads exists: ${fs.existsSync(uploadsPath)}`);
-
-  /* Start cron ONLY after DB connected */
-  if (dbConnected) {
-    startCrawlCron();
-  } else {
-    console.warn("⚠️  Cron skipped (no DB)");
-  }
+  console.log(`📁 Tasks uploads exists: ${fs.existsSync(path.join(uploadsPath, "tasks"))}`);
+  console.log(`📁 Avatars uploads exists: ${fs.existsSync(path.join(uploadsPath, "avatars"))}`);
+  console.log(`📁 Signatures uploads exists: ${fs.existsSync(path.join(uploadsPath, "signatures"))}`);
+  console.log(`📁 Voice uploads exists: ${fs.existsSync(path.join(uploadsPath, "voice"))}`);
+  console.log(`📁 Channels uploads exists: ${fs.existsSync(path.join(uploadsPath, "channels"))}`);
 
   server.listen(PORT, () => {
     console.log(`\n📡 Server:          http://localhost:${PORT}`);
@@ -370,8 +392,19 @@ const startServer = async () => {
     console.log(`💾 Database:        ${dbConnected ? "Connected ✅" : "Disconnected ⚠️"}`);
     console.log(`📁 Static files:    /uploads`);
     console.log(`🔌 Socket.io:       Initialized ✅`);
+    console.log(`🔐 Auth endpoint:   http://localhost:${PORT}/api/v1/auth/login`);
+    console.log(`📋 Tasks endpoint:  http://localhost:${PORT}/api/v1/tasks`);
+    console.log(`📁 Projects endpoint: http://localhost:${PORT}/api/v1/projects`);
+    console.log(`📦 Resources endpoint: http://localhost:${PORT}/api/v1/resources`);
+    console.log(`📝 Templates endpoint: http://localhost:${PORT}/api/v1/templates`);
+    console.log(`📋 Leaves endpoint: http://localhost:${PORT}/api/v1/leaves`);
+    console.log(`💬 Channels endpoint: http://localhost:${PORT}/api/v1/channels`);
+    console.log(`💬 Messages endpoint: http://localhost:${PORT}/api/v1/messages`);
+    console.log(`🎤 Voice endpoint:  http://localhost:${PORT}/api/v1/voice`);
+    console.log(`🧪 Test uploads:    http://localhost:${PORT}/test-uploads`);
     console.log("\n═══════════════════════════════════════════════════════════\n");
 
+    // Start scheduled jobs
     try {
       const { startScheduledJobs } = require("./src/services/notification.service");
       startScheduledJobs();
@@ -399,8 +432,10 @@ const gracefulShutdown = async () => {
 process.on("SIGINT", gracefulShutdown);
 process.on("SIGTERM", gracefulShutdown);
 
+// ==================== UNHANDLED REJECTIONS ====================
 process.on("unhandledRejection", (reason, promise) => {
-  console.error("❌ Unhandled Rejection:", reason);
+  console.error("❌ Unhandled Rejection at:", promise);
+  console.error("📚 Reason:", reason);
 });
 
 process.on("uncaughtException", (error) => {

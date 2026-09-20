@@ -1,190 +1,227 @@
 // src/controllers/tender/settings.controller.js
 const TenderSettings = require("../../models/TenderSettings.model");
-const Tender = require("../../models/Tender.model");
-const { User } = require("../../models/User.model");           // ← FIXED
-const { sendCrawlSummary } = require("../../utils/mailer");
+const SiteSource = require("../../models/SiteSource.model");
+const { runCrawlInternal } = require("../../services/crawlScheduler.service");
+const { crawlOne } = require("../../services/tenderCrawler.service");
 
 /* ============================================================
  * GET — one settings doc, or defaults
  * ============================================================ */
 const getSettings = async (_req, res) => {
-  try {
-    let doc = await TenderSettings.findOne().lean();
-    if (!doc) {
-      const created = await TenderSettings.create({});
-      doc = created.toObject();
+    try {
+        let doc = await TenderSettings.findOne().lean();
+        if (!doc) {
+            const created = await TenderSettings.create({});
+            doc = created.toObject();
+        }
+        res.json({ success: true, data: doc });
+    } catch (error) {
+        console.error("getSettings error:", error);
+        res.status(500).json({ success: false, message: error.message });
     }
-    res.json({ success: true, data: doc });
-  } catch (error) {
-    console.error("getSettings error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
 };
 
 /* ============================================================
- * UPDATE — patch the single doc
+ * UPDATE
  * ============================================================ */
 const updateSettings = async (req, res) => {
-  try {
-    const allowed = [
-      "sectors",
-      "customSectors",
-      "productLines",
-      "customProductLines",
-      "valueMin",
-      "valueMax",
-      "securityMin",
-      "securityMax",
-      "performanceMin",
-      "performanceMax",
-      "tenderTypes",
-      "customTenderTypes",
-      "crawlTime",
-      "notificationRecipientIds",
-      "customRangeNote",
-    ];
+    try {
+        const allowed = [
+            "sectors",
+            "customSectors",
+            "productLines",
+            "customProductLines",
+            "valueMin",
+            "valueMax",
+            "securityMin",
+            "securityMax",
+            "performanceMin",
+            "performanceMax",
+            "tenderTypes",
+            "customTenderTypes",
+            "crawlTime",
+            "customRangeNote",
+            "notificationRecipientIds",
+        ];
 
-    const patch = {};
-    for (const k of allowed) {
-      if (req.body[k] !== undefined) patch[k] = req.body[k];
+        const patch = {};
+        for (const k of allowed) {
+            if (req.body[k] !== undefined) patch[k] = req.body[k];
+        }
+        patch.updatedBy = req.user._id;
+
+        const doc = await TenderSettings.findOneAndUpdate({}, patch, {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+        }).lean();
+
+        res.json({ success: true, data: doc });
+    } catch (error) {
+        console.error("updateSettings error:", error);
+        res.status(500).json({ success: false, message: error.message });
     }
-    patch.updatedBy = req.user._id;
-
-    const doc = await TenderSettings.findOneAndUpdate({}, patch, {
-      new: true,
-      upsert: true,
-      setDefaultsOnInsert: true,
-    }).lean();
-
-    res.json({ success: true, data: doc });
-  } catch (error) {
-    console.error("updateSettings error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
 };
 
 /* ============================================================
- * GET LAST CRAWL — return last run info
+ * GET LAST CRAWL
  * ============================================================ */
 const getLastCrawl = async (_req, res) => {
-  try {
-    const doc = await TenderSettings.findOne().lean();
-    res.json({
-      success: true,
-      data: doc?.lastCrawl ?? null,
-    });
-  } catch (error) {
-    console.error("getLastCrawl error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
+    try {
+        const doc = await TenderSettings.findOne().lean();
+        res.json({ success: true, data: doc?.lastCrawl ?? null });
+    } catch (error) {
+        console.error("getLastCrawl error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
 };
 
 /* ============================================================
- * RUN CRAWL — triggers the daily tender search immediately
- *
- * Flow:
- *   1. Read criteria from TenderSettings
- *   2. Load recipient emails from notificationRecipientIds
- *   3. Run the crawl (stub — replace with real logic)
- *   4. Save summary in TenderSettings.lastCrawl
- *   5. Email recipients with a summary
+ * RUN CRAWL — HTTP handler (delegates to the shared service)
  * ============================================================ */
 const runCrawl = async (req, res) => {
-  try {
-    /* 1. Load criteria */
-    let settings = await TenderSettings.findOne();
-    if (!settings) settings = await TenderSettings.create({});
-
-    /* 2. Load recipient emails */
-    let recipients = [];
     try {
-      if (Array.isArray(settings.notificationRecipientIds) &&
-          settings.notificationRecipientIds.length > 0) {
-        recipients = await User.find({
-          _id: { $in: settings.notificationRecipientIds },
-        })
-          .select("email fullName")
-          .lean();
-      }
-    } catch (err) {
-      console.warn("[runCrawl] recipient lookup failed:", err.message);
-      recipients = [];
-    }
-
-    /* 3. Run the actual crawl
-     * ─────────────────────────────────────────────────────────────
-     * TODO: replace this stub with your real crawl logic.
-     * For now we simulate a crawl result so the flow works end-to-end.
-     */
-    const startedAt = new Date();
-    const sitesChecked = 14;
-    const newFound = Math.floor(Math.random() * 5);   // 0..4 simulated
-    const matched = Math.min(newFound, Math.floor(Math.random() * 3) + 1);
-    const at = startedAt.toLocaleString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    /* 4. Save summary on the settings doc */
-    settings.lastCrawl = {
-      at,
-      sitesChecked,
-      newFound,
-      matched,
-      ranAt: startedAt,
-      triggeredBy: req.user?._id || null,
-    };
-    await settings.save();
-
-    /* 5. Email recipients (if any + if matched > 0) */
-    let emailed = 0;
-    if (recipients.length > 0 && matched > 0) {
-      try {
-        const info = await sendCrawlSummary({
-          to: recipients.map((r) => r.email),
-          summary: { sitesChecked, newFound, matched },
-          criteria: {
-            sectors: settings.sectors,
-            productLines: settings.productLines,
-            valueMin: settings.valueMin,
-            valueMax: settings.valueMax,
-          },
-          ranAt: at,
+        const result = await runCrawlInternal({ userId: req.user?._id || null });
+        res.json({
+            success: true,
+            message: "Crawl complete",
+            data: result,
         });
-        emailed = info?.accepted?.length ?? recipients.length;
-      } catch (mailErr) {
-        console.warn("[runCrawl] crawl email failed:", mailErr.message);
-        /* Don't fail the whole crawl if mail fails */
-      }
+    } catch (error) {
+        console.error("runCrawl error:", error);
+        res.status(500).json({ success: false, message: error.message });
     }
+};
 
-    console.log(
-      `[runCrawl] ✅ sites=${sitesChecked} new=${newFound} matched=${matched} emailed=${emailed}`,
-    );
+/* ============================================================
+ * SITE SOURCE CRUD
+ * ============================================================ */
+const listSites = async (_req, res) => {
+    try {
+        const sites = await SiteSource.find({}).sort({ name: 1 }).lean();
+        res.json({ success: true, data: sites });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
 
-    res.json({
-      success: true,
-      message: "Crawl complete",
-      data: {
-        at,
-        sitesChecked,
-        newFound,
-        matched,
-        emailed,
-      },
-    });
-  } catch (error) {
-    console.error("runCrawl error:", error);
-    res.status(500).json({ success: false, message: error.message });
-  }
+const createSite = async (req, res) => {
+    try {
+        const {
+            name,
+            url,
+            listSelector,
+            titleSelector,
+            linkSelector,
+            dateSelector,
+            linkAttr,
+        } = req.body;
+
+        if (!name || !url || !listSelector) {
+            return res.status(400).json({
+                success: false,
+                message: "name, url, and listSelector are required",
+            });
+        }
+
+        const domain = (() => {
+            try {
+                return new URL(url).hostname;
+            } catch {
+                return "";
+            }
+        })();
+
+        const site = await SiteSource.create({
+            name,
+            url,
+            domain,
+            listSelector,
+            titleSelector: titleSelector || "td.title a",
+            linkSelector: linkSelector || "td.title a",
+            dateSelector: dateSelector || "td.date",
+            linkAttr: linkAttr || "href",
+            createdBy: req.user._id,
+            updatedBy: req.user._id,
+        });
+
+        res.status(201).json({ success: true, data: site });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+const updateSite = async (req, res) => {
+    try {
+        const site = await SiteSource.findByIdAndUpdate(
+            req.params.id,
+            { ...req.body, updatedBy: req.user._id },
+            { new: true },
+        );
+        if (!site) {
+            return res.status(404).json({ success: false, message: "Site not found" });
+        }
+        res.json({ success: true, data: site });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+const deleteSite = async (req, res) => {
+    try {
+        await SiteSource.findByIdAndDelete(req.params.id);
+        res.json({ success: true, message: "Site deleted" });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/* Preview: fetch & parse without saving */
+const previewSite = async (req, res) => {
+    try {
+        const {
+            url,
+            listSelector,
+            titleSelector,
+            linkSelector,
+            dateSelector,
+            linkAttr,
+        } = req.body;
+
+        if (!url || !listSelector) {
+            return res.status(400).json({
+                success: false,
+                message: "url and listSelector are required",
+            });
+        }
+
+        const tempSource = {
+            _id: null,
+            name: "Preview",
+            url,
+            listSelector,
+            titleSelector: titleSelector || "td.title a",
+            linkSelector: linkSelector || "td.title a",
+            dateSelector: dateSelector || "td.date",
+            linkAttr: linkAttr || "href",
+            absoluteLinks: true,
+        };
+
+        const r = await crawlOne(tempSource);
+        res.json({ success: r.ok, data: r });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
 };
 
 module.exports = {
-  getSettings,
-  updateSettings,
-  getLastCrawl,
-  runCrawl,
+    getSettings,
+    updateSettings,
+    getLastCrawl,
+    runCrawl,
+    listSites,
+    createSite,
+    updateSite,
+    deleteSite,
+    previewSite,
 };

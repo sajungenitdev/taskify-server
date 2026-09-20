@@ -21,12 +21,15 @@ const TenderSettingsSchema = new mongoose.Schema(
 
         crawlTime: { type: String, default: "06:00" },
 
+        /* Free-form note shown in "Custom Range Criteria" */
+        customRangeNote: { type: String, default: "" },
+
         /* Notification recipients */
         notificationRecipientIds: [
             { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         ],
 
-        /* Last crawl summary */
+        /* Last crawl summary + matched results */
         lastCrawl: {
             at: { type: String, default: "" },
             sitesChecked: { type: Number, default: 0 },
@@ -38,6 +41,24 @@ const TenderSettingsSchema = new mongoose.Schema(
                 ref: "User",
                 default: null,
             },
+            /** The actual matched tenders from the crawl */
+            results: [
+                {
+                    title: { type: String, default: "" },
+                    tenderer: { type: String, default: "" },
+                    sourceSite: { type: String, default: "" },
+                    sourceUrl: { type: String, default: "" },
+                    budget: { type: Number, default: 0 },
+                    securityAmount: { type: Number, default: 0 },
+                    publishedAt: { type: Date, default: null },
+                    matchedOn: { type: [String], default: [] },
+                    tenderId: {
+                        type: mongoose.Schema.Types.ObjectId,
+                        ref: "Tender",
+                        default: null,
+                    },
+                },
+            ],
         },
 
         /* Tracking */

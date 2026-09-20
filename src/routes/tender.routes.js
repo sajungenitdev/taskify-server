@@ -43,42 +43,43 @@ router.post("/docs", docCtrl.createDoc);
 router.patch("/docs/:id", docCtrl.updateDoc);
 router.delete("/docs/:id", docCtrl.deleteDoc);
 
-/* ---------- Company doc file upload ---------- */
 router.post(
     "/docs/:id/file",
     companyDocUpload.single("file"),
     docCtrl.uploadDocFile,
 );
-/* ---------- Company doc: renew ---------- */
 router.post("/docs/:id/renew", docCtrl.renewDoc);
 
-/* ---------- Tender settings — MUST be before /:id ---------- */
+/* ---------- Settings ---------- */
 router.get("/settings", settingsCtrl.getSettings);
 router.put("/settings", settingsCtrl.updateSettings);
 
-/* ---------- Crawl endpoints ---------- */
+/* ---------- Crawl ---------- */
 router.post("/crawl/run", settingsCtrl.runCrawl);
 router.get("/crawl/last", settingsCtrl.getLastCrawl);
 
+/* ---------- Site Sources (crawler targets) ---------- */
+router.get("/sites", settingsCtrl.listSites);
+router.post("/sites", settingsCtrl.createSite);
+router.put("/sites/:id", settingsCtrl.updateSite);
+router.delete("/sites/:id", settingsCtrl.deleteSite);
+router.post("/sites/preview", settingsCtrl.previewSite);
+
 /* ============================================================
- * TENDER CRUD — list & create (root)
+ * TENDER CRUD — root
  * ============================================================ */
 router.get("/", tenderCtrl.listTenders);
 router.post("/", tenderCtrl.createTender);
 
 /* ============================================================
- * SCOPED /:id ROUTES — must come BEFORE the generic /:id
+ * SCOPED /:id ROUTES
  * ============================================================ */
-
-/* ---------- DOC TASKS ---------- */
 router.post("/:id/doc-tasks", tenderCtrl.addDocTask);
 router.patch("/:id/doc-tasks/:taskId", tenderCtrl.updateDocTask);
 router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 
-/* ---------- CHECKLIST ---------- */
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
-/* ---------- ATTACHMENTS ---------- */
 router.post(
     "/:id/attachments",
     tenderUpload.single("file"),
@@ -86,7 +87,6 @@ router.post(
 );
 router.delete("/:id/attachments/:attachmentId", tenderCtrl.deleteAttachment);
 
-/* ---------- ADVERTISEMENT ---------- */
 router.post(
     "/:id/advertisement",
     advertisementUpload.single("file"),
@@ -95,7 +95,7 @@ router.post(
 router.delete("/:id/advertisement", tenderCtrl.deleteAdvertisement);
 
 /* ============================================================
- * GENERIC /:id — LAST (catches everything else)
+ * GENERIC /:id — LAST
  * ============================================================ */
 router.get("/:id", tenderCtrl.getTender);
 router.put("/:id", tenderCtrl.updateTender);
