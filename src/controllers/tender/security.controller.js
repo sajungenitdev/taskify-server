@@ -1,5 +1,7 @@
 // src/controllers/tender/security.controller.js
 const TenderSecurity = require("../../models/TenderSecurity.model");
+const Tender = require("../../models/Tender.model");                     // ← NEW
+const { sendSecurityNotification } = require("../../utils/mailer");      // ← NEW
 
 /* ============================================================
  * LIST — with entity, type, docs filters
@@ -168,10 +170,79 @@ const deleteSecurity = async (req, res) => {
   }
 };
 
+/* ============================================================
+ * NOTIFY FINANCE — send tender security email
+ * POST /api/v1/tenders/security/:id/notify
+ * Body: { emails: string[], note?: string }
+ * ============================================================ */
+const notifySecurity = async (req, res) => {
+  try {
+    const { emails, note } = req.body;
+
+    if (!Array.isArray(emails) || emails.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "emails[] is required" });
+    }
+
+    /* Basic email validation */
+    const valid = emails
+      .map((e) => String(e).trim())
+      .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+
+    if (!valid.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No valid email addresses" });
+    }
+
+    const security = await TenderSecurity.findById(req.params.id).lean();
+    if (!security) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Security record not found" });
+    }
+
+    /* Optional: enrich with linked tender */
+    let tender = null;
+    if (security.tenderId) {
+      tender = await Tender.findById(security.tenderId).lean();
+    }
+
+    const info = await sendSecurityNotification({
+      to: valid,
+      security,
+      tender,
+      note: note || "",
+      senderName: req.user?.fullName || req.user?.name || "",
+    });
+
+    console.log(
+      `[notifySecurity] ✅ sent to ${valid.length} recipient(s) — msgId: ${info.messageId}`,
+    );
+
+    res.json({
+      success: true,
+      message: `Notification sent to ${valid.length} recipient(s)`,
+      data: {
+        messageId: info.messageId,
+        recipients: valid,
+        accepted: info.accepted || [],
+        rejected: info.rejected || [],
+      },
+    });
+  } catch (error) {
+    console.error("notifySecurity error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
 module.exports = {
   listSecurity,
   securityStats,
   createSecurity,
   updateSecurity,
   deleteSecurity,
+  notifySecurity
 };

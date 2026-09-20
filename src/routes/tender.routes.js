@@ -8,6 +8,7 @@ const submissionCtrl = require("../controllers/tender/submission.controller");
 const securityCtrl = require("../controllers/tender/security.controller");
 const docCtrl = require("../controllers/tender/companyDoc.controller");
 const overviewCtrl = require("../controllers/tender/overview.controller");
+const settingsCtrl = require("../controllers/tender/settings.controller");
 
 const {
     tenderUpload,
@@ -18,7 +19,7 @@ const {
 router.use(authenticate);
 
 /* ============================================================
- * STATIC ROUTES — before any /:id
+ * STATIC ROUTES — must be BEFORE any /:id
  * ============================================================ */
 router.get("/overview", overviewCtrl.overview);
 router.get("/overview/upcoming", overviewCtrl.upcomingDeadlines);
@@ -33,6 +34,7 @@ router.get("/security/stats", securityCtrl.securityStats);
 router.post("/security", securityCtrl.createSecurity);
 router.patch("/security/:id", securityCtrl.updateSecurity);
 router.delete("/security/:id", securityCtrl.deleteSecurity);
+router.post("/security/:id/notify", securityCtrl.notifySecurity);
 
 router.get("/docs/list", docCtrl.listDocs);
 router.get("/docs/counts", docCtrl.docCounts);
@@ -50,8 +52,16 @@ router.post(
 /* ---------- Company doc: renew ---------- */
 router.post("/docs/:id/renew", docCtrl.renewDoc);
 
+/* ---------- Tender settings — MUST be before /:id ---------- */
+router.get("/settings", settingsCtrl.getSettings);
+router.put("/settings", settingsCtrl.updateSettings);
+
+/* ---------- Crawl endpoints ---------- */
+router.post("/crawl/run", settingsCtrl.runCrawl);
+router.get("/crawl/last", settingsCtrl.getLastCrawl);
+
 /* ============================================================
- * TENDER CRUD
+ * TENDER CRUD — list & create (root)
  * ============================================================ */
 router.get("/", tenderCtrl.listTenders);
 router.post("/", tenderCtrl.createTender);
@@ -85,7 +95,7 @@ router.post(
 router.delete("/:id/advertisement", tenderCtrl.deleteAdvertisement);
 
 /* ============================================================
- * GENERIC /:id — LAST
+ * GENERIC /:id — LAST (catches everything else)
  * ============================================================ */
 router.get("/:id", tenderCtrl.getTender);
 router.put("/:id", tenderCtrl.updateTender);

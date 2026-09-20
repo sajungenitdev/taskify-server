@@ -84,6 +84,9 @@ const listSubmissions = async (req, res) => {
 /* ============================================================
  * DETAIL — one tender's submission detail
  * ============================================================ */
+/* ============================================================
+ * DETAIL — one tender's submission detail
+ * ============================================================ */
 const getSubmissionDetail = async (req, res) => {
   try {
     const tender = await Tender.findById(req.params.id).lean();
@@ -107,6 +110,30 @@ const getSubmissionDetail = async (req, res) => {
       )
       : 0;
 
+    /* ---------- Bid summary ---------- */
+    const bidValue = Number(tender.bidValue) || 0;
+    const tenderSecurity = Number(tender.tenderSecurityAmount) || 0;
+    const performanceSecurity = Number(tender.performanceSecurityAmount) || 0;
+    const performanceSecurityPercent = bidValue
+      ? Math.round((performanceSecurity / bidValue) * 100)
+      : 0;
+
+    /* ---------- Documents submitted (attachments) ---------- */
+    const documentsSubmitted = (tender.attachments ?? []).map((a) => ({
+      id: String(a._id),
+      name: a.name,
+      url: a.url ?? "",
+      size: a.size ?? 0,
+      mimeType: a.mimeType ?? "",
+    }));
+
+    /* ---------- Other participants (competitors) ---------- */
+    const otherParticipants = (tender.otherParticipants ?? []).map((p) => ({
+      bidder: p.bidder,
+      value: Number(p.value) || 0,
+      isUs: !!p.isUs,
+    }));
+
     res.json({
       success: true,
       data: {
@@ -116,16 +143,30 @@ const getSubmissionDetail = async (req, res) => {
         deadlineDays,
         readiness: tender.readiness ?? 0,
 
+        /* ✅ Bid summary */
+        bidSummary: {
+          ourBidValue: bidValue,
+          tenderSecurity,
+          performanceSecurity,
+          performanceSecurityPercent,
+          currency: tender.currency || "BDT",
+        },
+
+        /* ✅ Other participants table */
+        otherParticipants,
+
+        /* ✅ Documents submitted (right panel) */
+        documentsSubmitted,
+
         docTasks: docTasks.map((t) => ({
           id: t._id,
           title: t.title,
           owner: t.owner,
           fileName: t.fileName,
-          fileUrl: t.fileUrl ?? "",       
+          fileUrl: t.fileUrl ?? "",
           status: t.status,
         })),
 
-        // Stored checklist (matches /tenders/manage)
         checklist: buildChecklist(tender, docTasks),
 
         info: {
