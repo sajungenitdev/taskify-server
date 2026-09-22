@@ -8,7 +8,7 @@ const TenderSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
 
     /* ---------- DRAFT FLAG ---------- */
-    draft: { type: Boolean, default: false, index: true },   // ← NEW
+    draft: { type: Boolean, default: false, index: true },
 
     /* ---------- LIFECYCLE STAGE ---------- */
     stage: {
@@ -47,9 +47,9 @@ const TenderSchema = new mongoose.Schema(
 
     /* ---------- SECURITY ---------- */
     tenderSecurityAmount: { type: Number, default: 0 },
-    tenderSecurityValidity: { type: Date, default: null },       // ← NEW
+    tenderSecurityValidity: { type: Date, default: null },
     performanceSecurityAmount: { type: Number, default: 0 },
-    performanceSecurityValidity: { type: Date, default: null },  // ← NEW
+    performanceSecurityValidity: { type: Date, default: null },
     securityMode: {
       type: String,
       enum: ["Online (eGP)", "Offline", "Bank Guarantee", ""],
@@ -145,8 +145,27 @@ const TenderSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+/* ============================================================
+ * INDEXES — tuned for the actual queries this app runs
+ * ============================================================ */
+
+// Primary list query: filter + sort by updatedAt
+TenderSchema.index({ draft: 1, updatedAt: -1 });
+TenderSchema.index({ stage: 1, updatedAt: -1 });
+TenderSchema.index({ tenderType: 1, updatedAt: -1 });
+
+// Owner-scoped listings (dashboard / overview)
+TenderSchema.index({ owner: 1, updatedAt: -1 });
+
+// Stage + owner (used by some overview queries)
 TenderSchema.index({ stage: 1, owner: 1 });
+
+// Full-text search
 TenderSchema.index({ tenderer: "text", title: "text", description: "text" });
+
+// Deadline queries (overview / upcoming)
+TenderSchema.index({ lastDateOfSubmission: 1 });
+TenderSchema.index({ lastDateOfPurchase: 1 });
 
 module.exports =
   mongoose.models.Tender || mongoose.model("Tender", TenderSchema);

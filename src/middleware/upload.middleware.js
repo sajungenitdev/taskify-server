@@ -17,6 +17,9 @@ const crypto = require("crypto");
 const uploadDir = path.join(__dirname, "../../uploads/chat");
 fs.mkdirSync(uploadDir, { recursive: true });
 
+// Tender chat reuses the same folder, so alias it for clarity
+const tenderChatUploadDir = uploadDir;
+
 const subDirs = ["images", "documents", "audio", "videos", "others"];
 subDirs.forEach((dir) => {
   fs.mkdirSync(path.join(uploadDir, dir), { recursive: true });
@@ -33,12 +36,23 @@ const advertisementUploadDir = path.join(
 );
 fs.mkdirSync(advertisementUploadDir, { recursive: true });
 
+// ---------- Company doc uploads ----------
+const companyDocUploadDir = path.join(
+  __dirname,
+  "../../uploads/company-docs",
+);
+fs.mkdirSync(companyDocUploadDir, { recursive: true });
+
 // ---------- Boot logs ----------
 console.log("[upload.middleware] uploadDir              :", uploadDir);
 console.log("[upload.middleware] tenderUploadDir        :", tenderUploadDir);
 console.log(
   "[upload.middleware] advertisementUploadDir :",
   advertisementUploadDir,
+);
+console.log(
+  "[upload.middleware] companyDocUploadDir    :",
+  companyDocUploadDir,
 );
 
 // ============================================================
@@ -47,7 +61,7 @@ console.log(
 const fileFilter = (_req, _file, cb) => cb(null, true);
 
 // ============================================================
-// STORAGE — CHAT
+// STORAGE — CHAT  (also used by tender chat)
 // ============================================================
 const chatStorage = multer.diskStorage({
   destination: (_req, file, cb) => {
@@ -121,6 +135,26 @@ const advertisementStorage = multer.diskStorage({
 });
 
 // ============================================================
+// STORAGE — COMPANY DOCS
+// ============================================================
+const companyDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(companyDocUploadDir, { recursive: true });
+    cb(null, companyDocUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 60) || "doc";
+    cb(null, `${Date.now()}-${id}-${base}${ext}`);
+  },
+});
+
+// ============================================================
 // MULTER INSTANCES
 // ============================================================
 const upload = multer({
@@ -138,6 +172,19 @@ const tenderUpload = multer({
 const advertisementUpload = multer({
   storage: advertisementStorage,
   limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+  fileFilter,
+});
+
+const companyDocUpload = multer({
+  storage: companyDocStorage,
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter,
+});
+
+// Tender chat — same storage as chat, its own instance for limits
+const tenderChatUpload = multer({
+  storage: chatStorage,
+  limits: { fileSize: 25 * 1024 * 1024, files: 10 },
   fileFilter,
 });
 
@@ -205,46 +252,31 @@ const getFileIcon = (mimeType) => {
   return "file";
 };
 
-// ---------- Company doc uploads ----------
-const companyDocUploadDir = path.join(
-  __dirname,
-  "../../uploads/company-docs",
-);
-fs.mkdirSync(companyDocUploadDir, { recursive: true });
-
-const companyDocStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    fs.mkdirSync(companyDocUploadDir, { recursive: true });
-    cb(null, companyDocUploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const id = crypto.randomBytes(8).toString("hex");
-    const ext = path.extname(file.originalname) || "";
-    const base =
-      path
-        .basename(file.originalname, ext)
-        .replace(/[^\w.\-]+/g, "_")
-        .slice(0, 60) || "doc";
-    cb(null, `${Date.now()}-${id}-${base}${ext}`);
-  },
-});
-
-const companyDocUpload = multer({
-  storage: companyDocStorage,
-  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
-  fileFilter,
-});
-
-
+// ============================================================
+// EXPORTS
+// ============================================================
 module.exports = {
+  // Chat (generic)
   upload,
+  uploadDir,
+
+  // Tender
   tenderUpload,
   tenderUploadDir,
-  advertisementUpload,       // ← NEW
-  advertisementUploadDir,    // ← NEW
+
+  // Advertisement
+  advertisementUpload,
+  advertisementUploadDir,
+
+  // Company docs
   companyDocUpload,
   companyDocUploadDir,
-  uploadDir,
+
+  // Tender chat (support)
+  tenderChatUpload,
+  tenderChatUploadDir,
+
+  // Utilities
   getFileType,
   getFileIcon,
 };
