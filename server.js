@@ -1,6 +1,7 @@
 // server.js
 // ==================== DNS OVERRIDE FOR MONGODB SRV ====================
 const dns = require("dns");
+dns.setDefaultResultOrder("ipv4first"); 
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 /* ---- Core dependencies ---- */
