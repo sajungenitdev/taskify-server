@@ -15,10 +15,8 @@ function toDate(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-/* Compute status + action from validUntil — always fresh */
 function computeStatus(doc) {
   if (!doc.validUntil) {
-    // No expiry — leave status as-is (default "Valid"), action "View"
     return {
       ...doc,
       status: doc.status || "Valid",
@@ -42,6 +40,18 @@ function computeStatus(doc) {
   };
 }
 
+/* Build the chip filter from query params (shared by listDocs + listAndCounts) */
+function buildChipFilter({ sector, duration, volume }) {
+  const chipFilters = [];
+  if (sector && sector !== "all") chipFilters.push(sector);
+  if (duration && duration !== "all") chipFilters.push(duration);
+  if (volume && volume !== "all") chipFilters.push(volume);
+
+  if (chipFilters.length === 0) return null;
+  if (chipFilters.length === 1) return chipFilters[0];
+  return { $all: chipFilters };
+}
+
 /* ============================================================
  * LIST — filter by category + optional filters on experience
  * ============================================================ */
@@ -52,22 +62,15 @@ const listDocs = async (req, res) => {
     const query = {};
     if (category && category !== "all") query.category = category;
 
-    const chipFilters = [];
-    if (sector && sector !== "all") chipFilters.push(sector);
-    if (duration && duration !== "all") chipFilters.push(duration);
-    if (volume && volume !== "all") chipFilters.push(volume);
-
-    if (chipFilters.length === 1) query.chips = chipFilters[0];
-    else if (chipFilters.length > 1) query.chips = { $all: chipFilters };
+    const chipFilter = buildChipFilter({ sector, duration, volume });
+    if (chipFilter) query.chips = chipFilter;
 
     const rows = await CompanyDocument.find(query)
       .sort({ createdAt: -1 })
       .lean();
 
-    // Recompute status/action on every read
     let enriched = rows.map(computeStatus);
 
-    // Apply status filter AFTER recompute (so it reflects live values)
     if (status && status !== "all") {
       const map = {
         expired: "Expired",
@@ -86,15 +89,74 @@ const listDocs = async (req, res) => {
 };
 
 /* ============================================================
- * COUNT PER CATEGORY (for tab badges)
+ * NEW — COMBINED list + counts in ONE request
+ * GET /api/v1/tenders/docs/bundle?category=legal
+ *
+ * Returns: { list: CompanyDocument[], counts: { legal, profiles, experience, certificates } }
+ * ============================================================ */
+const listAndCounts = async (req, res) => {
+  try {
+    const { category, sector, duration, volume, status } = req.query;
+
+    const query = {};
+    if (category && category !== "all") query.category = category;
+
+    const chipFilter = buildChipFilter({ sector, duration, volume });
+    if (chipFilter) query.chips = chipFilter;
+
+    /* Run list + counts aggregation in PARALLEL — one DB round trip each */
+    const [rows, countsAgg] = await Promise.all([
+      CompanyDocument.find(query)
+        .sort({ createdAt: -1 })
+        .lean(),
+
+      /* Counts across ALL documents regardless of current filters */
+      CompanyDocument.aggregate([
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    /* Recompute status/action live */
+    let enriched = rows.map(computeStatus);
+
+    if (status && status !== "all") {
+      const map = {
+        expired: "Expired",
+        expiring: "Expiring Soon",
+        valid: "Valid",
+      };
+      const target = map[status];
+      if (target) enriched = enriched.filter((d) => d.status === target);
+    }
+
+    /* Build counts map */
+    const counts = { legal: 0, profiles: 0, experience: 0, certificates: 0 };
+    countsAgg.forEach((c) => {
+      if (counts[c._id] !== undefined) counts[c._id] = c.count;
+    });
+
+    res.json({
+      success: true,
+      data: { list: enriched, counts },
+    });
+  } catch (error) {
+    console.error("listAndCounts error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * COUNT PER CATEGORY (legacy — kept for backwards compat)
  * ============================================================ */
 const docCounts = async (_req, res) => {
   try {
-    const rows = await CompanyDocument.find({}).lean();
+    const rows = await CompanyDocument.aggregate([
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+    ]);
     const counts = { legal: 0, profiles: 0, experience: 0, certificates: 0 };
-    for (const r of rows) {
-      if (counts[r.category] !== undefined) counts[r.category] += 1;
-    }
+    rows.forEach((r) => {
+      if (counts[r._id] !== undefined) counts[r._id] = r.count;
+    });
     res.json({ success: true, data: counts });
   } catch (error) {
     console.error("docCounts error:", error);
@@ -343,6 +405,7 @@ const uploadDocFile = async (req, res) => {
 module.exports = {
   listDocs,
   docCounts,
+  listAndCounts,      // ← NEW
   createDoc,
   updateDoc,
   renewDoc,

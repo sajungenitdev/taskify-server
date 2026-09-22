@@ -162,6 +162,7 @@ router.post("/security/:id/notify", securityCtrl.notifySecurity);
 
 router.get("/docs/list", docCtrl.listDocs);
 router.get("/docs/counts", docCtrl.docCounts);
+router.get("/docs/bundle", docCtrl.listAndCounts); 
 router.post("/docs/import", docCtrl.importDocsToTender);
 router.post("/docs", docCtrl.createDoc);
 router.patch("/docs/:id", docCtrl.updateDoc);
