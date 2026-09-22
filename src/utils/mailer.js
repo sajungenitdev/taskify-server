@@ -1,46 +1,76 @@
 // src/utils/mailer.js
 const nodemailer = require("nodemailer");
 
-/* ---------- Transporter — uses your existing EMAIL_* env vars ---------- */
+/* ============================================================
+ * TRANSPORTER
+ *
+ * Fixes applied:
+ *   • family: 4              → IPv4-only, prevents ENETUNREACH
+ *   • port 465 + secure      → SMTPS, more reliable than 587 on cloud
+ *   • connection/greeting/socket timeouts → fail fast, no infinite hangs
+ *   • pool: true             → reuse SMTP connections across sends
+ *   • .verify() REMOVED      → server no longer blocks on boot
+ * ============================================================ */
 const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || "smtp.gmail.com",
-    port: Number(process.env.EMAIL_PORT) || 587,
-    secure: false, // false for 587, true for 465
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-    },
+  host: process.env.EMAIL_HOST || "smtp.gmail.com",
+  port: Number(process.env.EMAIL_PORT) || 465,
+  secure: true, // implicit TLS for port 465
+  family: 4, // ← THE KEY FIX for ENETUNREACH
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+  pool: true,
+  maxConnections: 3,
+  maxMessages: 100,
+  connectionTimeout: 10_000,
+  greetingTimeout: 8_000,
+  socketTimeout: 15_000,
+  tls: {
+    rejectUnauthorized: false,
+  },
 });
 
-/* ---------- Verify at boot ---------- */
-transporter.verify().then(
-    () => console.log("✅ Email transporter ready"),
-    (err) => console.warn("⚠️ Email transporter error:", err.message),
-);
+/* ============================================================
+ * LAZY VERIFY (optional — call from a health route if you want)
+ * ============================================================ */
+let verified = false;
+async function verifyEmailOnce() {
+  if (verified) return true;
+  try {
+    await transporter.verify();
+    verified = true;
+    console.log("✅ Email transporter verified");
+    return true;
+  } catch (err) {
+    console.warn("⚠️ Email transporter error:", err.message);
+    return false;
+  }
+}
 
 /* ============================================================
  * HELPERS
  * ============================================================ */
 function formatBDT(n) {
-    return `৳${Number(n || 0).toLocaleString("en-IN")}`;
+  return `৳${Number(n || 0).toLocaleString("en-IN")}`;
 }
 
 function formatDate(d) {
-    if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-    });
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 /* ============================================================
- * HTML BUILDER
+ * HTML BUILDER — SECURITY NOTICE (unchanged)
  * ============================================================ */
 function buildSecurityEmailHTML({ security, tender, note, senderName }) {
-    const isMissing = security.docsStatus === "Missing";
+  const isMissing = security.docsStatus === "Missing";
 
-    return `
+  return `
 <!doctype html>
 <html>
   <head>
@@ -90,9 +120,9 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
                     </td>
                     <td>
                       <span style="display:inline-block;padding:5px 12px;border-radius:999px;${isMissing
-            ? "background:#fef2f2;color:#b91c1c;"
-            : "background:#ecfdf5;color:#047857;"
-        }font-size:12px;font-weight:700;letter-spacing:0.02em;">
+      ? "background:#fef2f2;color:#b91c1c;"
+      : "background:#ecfdf5;color:#047857;"
+    }font-size:12px;font-weight:700;letter-spacing:0.02em;">
                         ${isMissing ? "⚠ Docs Missing" : "✓ Docs Attached"}
                       </span>
                     </td>
@@ -130,7 +160,7 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
                           <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;${tender ? "border-bottom:1px solid #f1ede2;" : ""}">${formatDate(security.dueDate)}</td>
                         </tr>
                         ${tender
-            ? `
+      ? `
                         <tr>
                           <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Linked Tender</td>
                           <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${tender.title} <span style="color:#94a3b8;">— ${tender.tenderer}</span></td>
@@ -140,8 +170,8 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
                           <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;">${formatDate(tender.lastDateOfSubmission)}</td>
                         </tr>
                         `
-            : ""
-        }
+      : ""
+    }
                       </table>
                     </td>
                   </tr>
@@ -150,7 +180,7 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
             </tr>
 
             ${note
-            ? `
+      ? `
             <tr>
               <td style="padding:18px 28px 0;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-left:3px solid #a97400;background:#fdf8ec;border-radius:6px;">
@@ -164,17 +194,17 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
               </td>
             </tr>
             `
-            : ""
-        }
+      : ""
+    }
 
             <!-- Action -->
             <tr>
               <td style="padding:22px 28px 0;">
                 <p style="margin:0;font-size:13px;line-height:1.6;color:#334155;">
                   ${isMissing
-            ? `Kindly arrange the payment / bank instrument at the earliest — the pay order document has not yet been attached to this record.`
-            : `No action needed for documentation. Please confirm receipt of this notice.`
-        }
+      ? `Kindly arrange the payment / bank instrument at the earliest — the pay order document has not yet been attached to this record.`
+      : `No action needed for documentation. Please confirm receipt of this notice.`
+    }
                 </p>
               </td>
             </tr>
@@ -196,12 +226,12 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
                 <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">
                   This is an automated notification from the Tender Dashboard.<br />
                   Generated on ${new Date().toLocaleString("en-GB", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-        })}.
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })}.
                 </p>
               </td>
             </tr>
@@ -215,41 +245,66 @@ function buildSecurityEmailHTML({ security, tender, note, senderName }) {
 }
 
 /* ============================================================
- * SEND
+ * RETRY WRAPPER — retries once on transient network errors
  * ============================================================ */
-async function sendSecurityNotification({
-    to,
-    security,
-    tender = null,
-    note = "",
-    senderName = "",
-}) {
-    if (!to || !to.length) throw new Error("At least one recipient is required");
-    if (!security) throw new Error("Security record is required");
-
-    const html = buildSecurityEmailHTML({ security, tender, note, senderName });
-
-    const fromAddress =
-        process.env.EMAIL_FROM ||
-        `"Tender Dashboard" <${process.env.EMAIL_USER}>`;
-
-    const info = await transporter.sendMail({
-        from: fromAddress,
-        to: to.join(", "),
-        subject: `Tender Security Notice — ${security.entity} (${security.type}) — ${formatBDT(security.amount)}`,
-        html,
-    });
-
+async function sendWithRetry(mailOptions, attempt = 1) {
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[email] ✅ sent to ${mailOptions.to} — id=${info.messageId}`);
     return info;
+  } catch (err) {
+    const isTransient =
+      /ETIMEDOUT|ECONNRESET|ENETUNREACH|EAI_AGAIN|socket hang up|Connection timeout/i.test(
+        err.message,
+      );
+
+    if (attempt < 2 && isTransient) {
+      console.warn(
+        `[email] ⟳ transient failure (attempt ${attempt}): ${err.message}`,
+      );
+      await new Promise((r) => setTimeout(r, 1500));
+      return sendWithRetry(mailOptions, attempt + 1);
+    }
+
+    console.error(`[email] ❌ failed: ${err.message}`);
+    throw err;
+  }
 }
 
 /* ============================================================
- * CRAWL SUMMARY EMAIL
+ * SEND — SECURITY NOTIFICATION
+ * ============================================================ */
+async function sendSecurityNotification({
+  to,
+  security,
+  tender = null,
+  note = "",
+  senderName = "",
+}) {
+  if (!to || !to.length) throw new Error("At least one recipient is required");
+  if (!security) throw new Error("Security record is required");
+
+  const html = buildSecurityEmailHTML({ security, tender, note, senderName });
+
+  const fromAddress =
+    process.env.EMAIL_FROM ||
+    `"Tender Dashboard" <${process.env.EMAIL_USER}>`;
+
+  return sendWithRetry({
+    from: fromAddress,
+    to: to.join(", "),
+    subject: `Tender Security Notice — ${security.entity} (${security.type}) — ${formatBDT(security.amount)}`,
+    html,
+  });
+}
+
+/* ============================================================
+ * SEND — CRAWL SUMMARY
  * ============================================================ */
 async function sendCrawlSummary({ to, summary, criteria, ranAt }) {
-    if (!to || !to.length) return null;
+  if (!to || !to.length) return null;
 
-    const html = `
+  const html = `
 <!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#faf7f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;">
@@ -288,17 +343,20 @@ async function sendCrawlSummary({ to, summary, criteria, ranAt }) {
   </body>
 </html>`;
 
-    return transporter.sendMail({
-        from: process.env.EMAIL_FROM || `"Tender Dashboard" <${process.env.EMAIL_USER}>`,
-        to: to.join(", "),
-        subject: `Tender Crawl Summary — ${summary.matched} matched of ${summary.newFound} new`,
-        html,
-    });
+  return sendWithRetry({
+    from:
+      process.env.EMAIL_FROM ||
+      `"Tender Dashboard" <${process.env.EMAIL_USER}>`,
+    to: to.join(", "),
+    subject: `Tender Crawl Summary — ${summary.matched} matched of ${summary.newFound} new`,
+    html,
+  });
 }
 
 module.exports = {
-    transporter,
-    sendSecurityNotification,
-    buildSecurityEmailHTML,
-    sendCrawlSummary,
+  transporter,
+  verifyEmailOnce,
+  sendSecurityNotification,
+  buildSecurityEmailHTML,
+  sendCrawlSummary,
 };
