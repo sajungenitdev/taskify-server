@@ -115,6 +115,17 @@ const createSite = async (req, res) => {
             linkSelector,
             dateSelector,
             linkAttr,
+            renderMode,
+            // ---- new fields ----
+            sector,
+            portalUrl,
+            popular,
+            popularShort,
+            popularColor,
+            popularSubtitle,
+            siteInfoSector,
+            siteInfoPortalType,
+            siteInfoContact,
         } = req.body;
 
         if (!name || !url || !listSelector) {
@@ -141,6 +152,23 @@ const createSite = async (req, res) => {
             linkSelector: linkSelector || "td.title a",
             dateSelector: dateSelector || "td.date",
             linkAttr: linkAttr || "href",
+            renderMode: renderMode || "cheerio",
+
+            /* Site Directory */
+            sector: sector || "banks",
+            portalUrl: portalUrl || url,
+
+            /* Popular */
+            popular: !!popular,
+            popularShort: popularShort || "",
+            popularColor: popularColor || "#1F3864",
+            popularSubtitle: popularSubtitle || "",
+
+            /* Info modal */
+            siteInfoSector: siteInfoSector || "",
+            siteInfoPortalType: siteInfoPortalType || "",
+            siteInfoContact: siteInfoContact || "",
+
             createdBy: req.user._id,
             updatedBy: req.user._id,
         });
