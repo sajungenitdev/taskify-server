@@ -307,6 +307,7 @@ const getTaskById = async (req, res) => {
       .populate("projectId", "name code description")
       .populate("departmentId", "name code")
       .populate("parentTaskId", "title status deadline")
+      .populate("extensionRequests.approvedBy", "fullName email")   // ✅ ADD THIS
       .lean();
 
     if (!task) {
@@ -1993,13 +1994,16 @@ const approveExtension = async (req, res) => {
         $set: {
           "extensionRequests.$.status": "approved",
           "extensionRequests.$.approvedBy": req.user._id,
-          revisedDeadline: new Date(newDeadline),
+          "extensionRequests.$.approvedAt": new Date(),
+          deadline: new Date(newDeadline),        // ✅ actually move the deadline
+          revisedDeadline: new Date(newDeadline), // ✅ keep audit trail
         },
       },
       { new: true },
     )
       .populate("assignedTo", "fullName email")
       .populate("assignedBy", "fullName email")
+      .populate("extensionRequests.approvedBy", "fullName email")
       .lean();
 
     if (!task) {
@@ -2027,6 +2031,7 @@ const getExtensionRequests = async (req, res) => {
 
     const task = await Task.findById(id)
       .populate("assignedTo", "fullName email")
+      .populate("extensionRequests.approvedBy", "fullName email")
       .lean();
 
     if (!task) {
@@ -2075,7 +2080,13 @@ const getExtensionRequests = async (req, res) => {
         requestedDate: req.requestedDate,
         reason: req.reason,
         status: req.status,
-        approvedBy: req.approvedBy,
+        approvedBy: req.approvedBy && req.approvedBy.fullName
+          ? {
+            _id: req.approvedBy._id,
+            fullName: req.approvedBy.fullName,
+            email: req.approvedBy.email,
+          }
+          : null,
         createdAt: req.createdAt || req.requestedDate,
       })),
     });
