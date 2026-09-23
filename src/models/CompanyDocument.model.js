@@ -10,12 +10,14 @@ const CompanyDocumentSchema = new mongoose.Schema(
       index: true,
     },
 
-    /* ---------- Legal / certificate fields ---------- */
+    /* ---------- Common fields ---------- */
     title: { type: String, required: true, trim: true },
+    description: { type: String, default: "" },         // profile description / generic doc notes
     reference: { type: String, default: "" },
-    validity: { type: String, default: "" },              // free-text display
-    validUntil: { type: Date, default: null, index: true }, // ← NEW — real expiry date
-    issuedOn: { type: Date, default: null },                // ← NEW — optional issue date
+    validity: { type: String, default: "" },            // free-text display ("Valid until 30 Jun 2028")
+    validUntil: { type: Date, default: null, index: true },
+    issuedOn: { type: Date, default: null },
+
     status: {
       type: String,
       enum: ["Valid", "Expiring Soon", "Expired"],
@@ -24,22 +26,22 @@ const CompanyDocumentSchema = new mongoose.Schema(
     },
     action: {
       type: String,
-      enum: ["View", "Replace", "Renew"],                    // ← NEW: "Renew"
+      enum: ["View", "Replace", "Renew"],
       default: "View",
     },
 
-    /* ---------- File fields ---------- */
+    /* ---------- File metadata ---------- */
     fileUrl: { type: String, default: "" },
     fileName: { type: String, default: "" },
     fileSize: { type: Number, default: 0 },
     fileMime: { type: String, default: "" },
     docType: { type: String, default: "" },
 
-    /* ---------- Experience card fields ---------- */
-    subtitle: { type: String, default: "" },
-    chips: [{ type: String }], // ["Power & Energy", "3+ Yrs", "৳5L+"]
+    /* ---------- Experience-only fields ---------- */
+    subtitle: { type: String, default: "" },            // legacy / experience
+    chips: { type: [String], default: [] },             // ["Power & Energy", "3+ Yrs", "৳5L+"]
 
-    /* ---------- Tracking ---------- */
+    /* ---------- Import tracking ---------- */
     importedInto: [
       {
         tenderId: { type: mongoose.Schema.Types.ObjectId, ref: "Tender" },
@@ -54,20 +56,34 @@ const CompanyDocumentSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-CompanyDocumentSchema.index({ title: "text", reference: "text" });
-CompanyDocumentSchema.index({ category: 1, validUntil: 1 });     // ← NEW
-CompanyDocumentSchema.index({ status: 1, validUntil: 1 });       // ← NEW
+/* ============================================================
+ * INDEXES — tuned for the queries this app actually runs
+ * ============================================================ */
+
+// Primary listing: filter by category, sort by createdAt
+CompanyDocumentSchema.index({ category: 1, createdAt: -1 });
+
+// Status filters within a category
+CompanyDocumentSchema.index({ category: 1, status: 1 });
+
+// Expiry window queries (used by renew alerts)
+CompanyDocumentSchema.index({ category: 1, validUntil: 1 });
+CompanyDocumentSchema.index({ status: 1, validUntil: 1 });
+
+// Search
+CompanyDocumentSchema.index({ title: "text", description: "text", reference: "text" });
+
+// Chip-filtered lists (experience page)
+CompanyDocumentSchema.index({ category: 1, chips: 1, createdAt: -1 });
 
 /* ============================================================
- * STATUS AUTO-COMPUTE
- * Runs before every save. If `validUntil` is set, `status` is
- * derived from it. If `validUntil` is null, `status` is left as-is.
+ * PRE-SAVE — keep status/action in sync with validUntil
  * ============================================================ */
 CompanyDocumentSchema.pre("save", function (next) {
   if (this.validUntil) {
-    const now = new Date();
+    const now = Date.now();
     const diffDays = Math.ceil(
-      (this.validUntil.getTime() - now.getTime()) / 86400000,
+      (this.validUntil.getTime() - now) / 86400000,
     );
 
     if (diffDays < 0) {
@@ -78,7 +94,6 @@ CompanyDocumentSchema.pre("save", function (next) {
       this.action = "Renew";
     } else {
       this.status = "Valid";
-      // Keep whatever action was set; default to View if blank
       if (this.action === "Renew") this.action = "View";
     }
   }
