@@ -106,77 +106,55 @@ const listSites = async (_req, res) => {
 };
 
 const createSite = async (req, res) => {
-    try {
-        const {
-            name,
-            url,
-            listSelector,
-            titleSelector,
-            linkSelector,
-            dateSelector,
-            linkAttr,
-            renderMode,
-            // ---- new fields ----
-            sector,
-            portalUrl,
-            popular,
-            popularShort,
-            popularColor,
-            popularSubtitle,
-            siteInfoSector,
-            siteInfoPortalType,
-            siteInfoContact,
-        } = req.body;
+  try {
+    const {
+      name, url, listSelector,
+      titleSelector, linkSelector, dateSelector, linkAttr,
+      renderMode,
+      /* new */
+      sector, portalUrl,
+      popular, popularShort, popularColor, popularSubtitle,
+      siteInfoSector, siteInfoPortalType, siteInfoContact,
+    } = req.body;
 
-        if (!name || !url || !listSelector) {
-            return res.status(400).json({
-                success: false,
-                message: "name, url, and listSelector are required",
-            });
-        }
-
-        const domain = (() => {
-            try {
-                return new URL(url).hostname;
-            } catch {
-                return "";
-            }
-        })();
-
-        const site = await SiteSource.create({
-            name,
-            url,
-            domain,
-            listSelector,
-            titleSelector: titleSelector || "td.title a",
-            linkSelector: linkSelector || "td.title a",
-            dateSelector: dateSelector || "td.date",
-            linkAttr: linkAttr || "href",
-            renderMode: renderMode || "cheerio",
-
-            /* Site Directory */
-            sector: sector || "banks",
-            portalUrl: portalUrl || url,
-
-            /* Popular */
-            popular: !!popular,
-            popularShort: popularShort || "",
-            popularColor: popularColor || "#1F3864",
-            popularSubtitle: popularSubtitle || "",
-
-            /* Info modal */
-            siteInfoSector: siteInfoSector || "",
-            siteInfoPortalType: siteInfoPortalType || "",
-            siteInfoContact: siteInfoContact || "",
-
-            createdBy: req.user._id,
-            updatedBy: req.user._id,
-        });
-
-        res.status(201).json({ success: true, data: site });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+    if (!name || !url || !listSelector) {
+      return res.status(400).json({
+        success: false,
+        message: "name, url, and listSelector are required",
+      });
     }
+
+    const domain = (() => {
+      try { return new URL(url).hostname; } catch { return ""; }
+    })();
+
+    const site = await SiteSource.create({
+      name, url, domain,
+      listSelector,
+      titleSelector: titleSelector || "td.title a",
+      linkSelector: linkSelector || "td.title a",
+      dateSelector: dateSelector || "td.date",
+      linkAttr: linkAttr || "href",
+      renderMode: renderMode || "cheerio",
+
+      sector: sector || "banks",
+      portalUrl: portalUrl || url,
+      popular: !!popular,
+      popularShort: popularShort || "",
+      popularColor: popularColor || "#1F3864",
+      popularSubtitle: popularSubtitle || "",
+      siteInfoSector: siteInfoSector || "",
+      siteInfoPortalType: siteInfoPortalType || "",
+      siteInfoContact: siteInfoContact || "",
+
+      createdBy: req.user._id,
+      updatedBy: req.user._id,
+    });
+
+    res.status(201).json({ success: true, data: site });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 };
 
 const updateSite = async (req, res) => {
