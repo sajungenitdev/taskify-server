@@ -617,21 +617,65 @@ const {
 } = require("../../middleware/upload.middleware");
 
 /* Fields the list card renders — everything else stays on the server. */
+/* Fields the list + detail-review panels render.
+   The TenderDetailReview component reads advertisement*, attachments,
+   eligibility, recordedBy, responsiblePerson, tenderLink, note, etc.
+   — every one of those MUST be included here or they vanish on refetch. */
 const LIST_FIELDS = [
+  /* basic */
   "tenderer",
   "title",
+  "description",
   "stage",
   "tenderType",
   "draft",
   "currency",
+
+  /* value + dates */
   "tentativeBudget",
+  "bidValue",
   "lastDateOfPurchase",
   "lastDateOfSubmission",
   "submittedAt",
+  "submitted",
+  "lostAt",
+
+  /* status */
   "readiness",
   "docStatus",
+  "mode",
+  "securityMode",
+
+  /* security */
+  "tenderSecurityAmount",
+  "tenderSecurityValidity",
+  "performanceSecurityAmount",
+  "performanceSecurityValidity",
+
+  /* owner */
   "owner",
   "departmentId",
+
+  /* ---------- TenderDetailReview fields ---------- */
+  "advertisementFile",
+  "advertisementUrl",
+  "advertisementUploadedBy",
+  "advertisementUploadedAt",
+  "attachments",
+  "eligibility",
+  "recordedBy",
+  "responsiblePerson",
+  "tenderLink",
+  "note",
+
+  /* ---------- other-stage detail panels ---------- */
+  "lossReason",
+  "lowestCompliantBidder",
+  "lowestCompliantValue",
+  "checklist",
+  "otherParticipants",
+
+  /* timestamps */
   "updatedAt",
   "createdAt",
 ].join(" ");
