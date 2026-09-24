@@ -1,6 +1,29 @@
 // src/models/Tender.model.js
 const mongoose = require("mongoose");
 
+/* ============================================================
+   SUB-SCHEMA — Eligibility Requirements
+   Each requirement the principal publishes, along with our
+   own record and the resulting match verdict.
+   ============================================================ */
+const EligibilityRequirementSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },           // stable key (uuid/slug)
+    requirement: { type: String, required: true },   // "Experience — as advertised"
+    ourRecord: { type: String, default: "" },        // "7 years"
+    match: {
+      type: String,
+      enum: ["Meets", "Gap", "Partial", ""],
+      default: "",
+    },
+    note: { type: String, default: "" },             // optional per-row note
+  },
+  { _id: false },                                    // use `id` as the key
+);
+
+/* ============================================================
+   MAIN SCHEMA
+   ============================================================ */
 const TenderSchema = new mongoose.Schema(
   {
     /* ---------- BASIC INFO ---------- */
@@ -81,6 +104,12 @@ const TenderSchema = new mongoose.Schema(
     /* ---------- NOTES / ELIGIBILITY ---------- */
     note: { type: String, default: "" },
     eligibility: { type: String, default: "" },
+
+    /* ---------- ELIGIBILITY REQUIREMENTS (structured) ---------- */
+    eligibilityRequirements: {
+      type: [EligibilityRequirementSchema],
+      default: [],
+    },
 
     /* ---------- ATTACHMENTS ---------- */
     attachments: [
