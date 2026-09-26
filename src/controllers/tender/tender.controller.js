@@ -615,6 +615,7 @@ const {
   tenderUploadDir,
   advertisementUploadDir,
 } = require("../../middleware/upload.middleware");
+const { sendMail } = require("../../utils/mailer");
 
 /* Fields the list card renders — everything else stays on the server. */
 /* Fields the list + detail-review panels render.
@@ -1266,6 +1267,251 @@ const deleteAdvertisement = async (req, res) => {
   }
 };
 
+/* ============================================================
+ * ✅ NOTIFY FINANCE — email a custom list of recipients
+ * ============================================================ */
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const notifyFinance = async (req, res) => {
+  try {
+    const { emails, note } = req.body || {};
+
+    if (!Array.isArray(emails) || emails.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "emails[] is required and must not be empty",
+      });
+    }
+
+    const tender = await Tender.findById(req.params.id).lean();
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    const valid = emails
+      .map((e) => String(e).trim())
+      .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+
+    if (valid.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid email addresses provided",
+      });
+    }
+
+    const deadline = tender.lastDateOfSubmission
+      ? new Date(tender.lastDateOfSubmission).toLocaleString("en-GB")
+      : "—";
+
+    const subject = `[Tender] Banking docs pending — ${tender.tenderer}`;
+
+    const noteBlock = note
+      ? `<div style="margin-top:12px;padding:10px 12px;background:#f8fafc;border-left:3px solid #a97400;border-radius:4px">
+             <strong>Note from ${escapeHtml(req.user?.fullName || "team")}:</strong>
+             <div style="margin-top:4px;color:#334155">${escapeHtml(note)}</div>
+         </div>`
+      : "";
+
+    const html = `
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Banking Docs Pending — ${escapeHtml(tender.tenderer || "Tender")}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#faf7f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#0f172a;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf7f0;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:14px;border:1px solid #e5e0d5;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">
+
+            <!-- Header -->
+            <tr>
+              <td style="background:#a97400;padding:22px 28px;">
+                <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#fce9c2;">
+                  Tender Dashboard
+                </p>
+                <h1 style="margin:6px 0 0;font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.01em;">
+                  Banking Documents Pending
+                </h1>
+              </td>
+            </tr>
+
+            <!-- Intro -->
+            <tr>
+              <td style="padding:24px 28px 8px;">
+                <p style="margin:0;font-size:14px;line-height:1.6;color:#334155;">
+                  Hi Finance Team,
+                </p>
+                <p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:#334155;">
+                  The following tender is awaiting <strong>banking documents</strong> — please review and action at the earliest.
+                </p>
+              </td>
+            </tr>
+
+            <!-- Badges -->
+            <tr>
+              <td style="padding:16px 28px 0;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding-right:8px;">
+                      <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#f4ead6;color:#8a6a2b;font-size:12px;font-weight:700;letter-spacing:0.02em;">
+                        ${escapeHtml(tender.tenderType || "Tender")}
+                      </span>
+                    </td>
+                    <td>
+                      <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;letter-spacing:0.02em;">
+                        ⚠ Banking Docs Pending
+                      </span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Detail card -->
+            <tr>
+              <td style="padding:18px 28px 0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e0d5;border-radius:10px;overflow:hidden;">
+                  <tr>
+                    <td style="padding:14px 16px;background:#faf7f0;border-bottom:1px solid #e5e0d5;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">
+                      Tender Details
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:0;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;width:40%;">Tenderer</td>
+                          <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${escapeHtml(tender.tenderer || "—")}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Title</td>
+                          <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${escapeHtml(tender.title || "—")}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Submission Deadline</td>
+                          <td style="padding:12px 16px;font-size:13px;color:${deadline === "—" ? "#94a3b8" : "#b91c1c"};font-weight:700;border-bottom:1px solid #f1ede2;">${deadline}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding:12px 16px;font-size:12px;color:#64748b;">Requested By</td>
+                          <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;">${escapeHtml(req.user?.fullName || "—")}</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            ${note
+        ? `
+            <tr>
+              <td style="padding:18px 28px 0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-left:3px solid #a97400;background:#fdf8ec;border-radius:6px;">
+                  <tr>
+                    <td style="padding:12px 16px;">
+                      <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8a6a2b;">Note</p>
+                      <p style="margin:6px 0 0;font-size:13px;line-height:1.6;color:#334155;">${escapeHtml(note)}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            `
+        : ""
+      }
+
+            <!-- Action -->
+            <tr>
+              <td style="padding:22px 28px 0;">
+                <p style="margin:0;font-size:13px;line-height:1.6;color:#334155;">
+                  Please prepare and attach the required banking documents (pay order, bank guarantee, etc.) so the submission can proceed on time.
+                </p>
+              </td>
+            </tr>
+
+            <!-- Signature -->
+            <tr>
+              <td style="padding:22px 28px 0;">
+                <p style="margin:0;font-size:13px;color:#334155;">
+                  Regards,<br />
+                  <strong style="color:#0f172a;">${escapeHtml(req.user?.fullName || "Tender Desk")}</strong>
+                </p>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding:24px 28px 26px;">
+                <hr style="border:none;border-top:1px solid #e5e0d5;margin:0 0 14px;" />
+                <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">
+                  This is an automated notification from the Tender Dashboard.<br />
+                  Generated on ${new Date().toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })}.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+`;
+
+    const results = await Promise.allSettled(
+      valid.map((email) => sendMail({ to: email, subject, html })),
+    );
+
+    const sent = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.length - sent;
+
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.warn(
+          `[notifyFinance] mail to ${valid[i]} failed:`,
+          r.reason?.message || r.reason,
+        );
+      }
+    });
+
+    return res.json({
+      success: true,
+      message:
+        failed === 0
+          ? `Notified ${sent} recipient${sent === 1 ? "" : "s"}`
+          : `Notified ${sent} of ${results.length} (${failed} failed)`,
+      data: {
+        recipients: valid,
+        sent,
+        failed,
+      },
+    });
+  } catch (error) {
+    console.error("notifyFinance error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: error.message });
+  }
+};
+
+
 module.exports = {
   listTenders,
   getTender,
@@ -1281,4 +1527,5 @@ module.exports = {
   deleteAttachment,
   uploadAdvertisement,
   deleteAdvertisement,
+  notifyFinance,
 };

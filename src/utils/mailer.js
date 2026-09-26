@@ -14,7 +14,7 @@ const nodemailer = require("nodemailer");
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST || "smtp.gmail.com",
   port: Number(process.env.EMAIL_PORT) || 465,
-  secure: true, // implicit TLS for port 465
+  secure: false, // implicit TLS for port 465
   family: 4, // ← THE KEY FIX for ENETUNREACH
   auth: {
     user: process.env.EMAIL_USER,
@@ -65,7 +65,7 @@ function formatDate(d) {
 }
 
 /* ============================================================
- * HTML BUILDER — SECURITY NOTICE (unchanged)
+ * HTML BUILDER — SECURITY NOTICE
  * ============================================================ */
 function buildSecurityEmailHTML({ security, tender, note, senderName }) {
   const isMissing = security.docsStatus === "Missing";
@@ -353,10 +353,35 @@ async function sendCrawlSummary({ to, summary, criteria, ranAt }) {
   });
 }
 
+/* ============================================================
+ * SEND — GENERIC (used by notifyFinance and other controllers)
+ * Reuses the same transporter + retry logic as the other senders.
+ * ============================================================ */
+async function sendMail({ to, subject, html, text }) {
+  if (!to) throw new Error("Recipient (to) is required");
+  if (!subject) throw new Error("Subject is required");
+  if (!html && !text) throw new Error("Email body (html or text) is required");
+
+  const recipients = Array.isArray(to) ? to.join(", ") : String(to);
+
+  const fromAddress =
+    process.env.EMAIL_FROM ||
+    `"Tender Dashboard" <${process.env.EMAIL_USER}>`;
+
+  return sendWithRetry({
+    from: fromAddress,
+    to: recipients,
+    subject,
+    html,
+    text,
+  });
+}
+
 module.exports = {
   transporter,
   verifyEmailOnce,
   sendSecurityNotification,
   buildSecurityEmailHTML,
   sendCrawlSummary,
+  sendMail,        // ✅ NEW — used by tender.controller.js notifyFinance
 };
