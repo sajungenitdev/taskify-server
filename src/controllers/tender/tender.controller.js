@@ -1314,7 +1314,7 @@ const notifyFinance = async (req, res) => {
 
     /* ✅ Build the tender URL used inside the email button */
     const CLIENT_URL = process.env.CLIENT_URL || "https://taskify-server-5gat.onrender.com";
-    const tenderUrl = `${CLIENT_URL}/tenders/manage?tenderId=${tender._id}`;
+    // const tenderUrl = `${CLIENT_URL}/tenders/manage?tenderId=${tender._id}`;
     const submissionUrl = `${CLIENT_URL}/tenders/submissions`;
 
     const subject = `[Tender] Banking docs pending — ${tender.tenderer}`;
