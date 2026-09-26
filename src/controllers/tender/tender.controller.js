@@ -1312,6 +1312,11 @@ const notifyFinance = async (req, res) => {
       ? new Date(tender.lastDateOfSubmission).toLocaleString("en-GB")
       : "—";
 
+    /* ✅ Build the tender URL used inside the email button */
+    const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+    const tenderUrl = `${CLIENT_URL}/tenders/manage?tenderId=${tender._id}`;
+    const submissionUrl = `${CLIENT_URL}/tenders/submissions`;
+
     const subject = `[Tender] Banking docs pending — ${tender.tenderer}`;
 
     const noteBlock = note
@@ -1327,7 +1332,7 @@ const notifyFinance = async (req, res) => {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Banking Docs Pending — ${escapeHtml(tender.tenderer || "Tender")}</title>
+    <title>Docs Pending — ${escapeHtml(tender.tenderer || "Tender")}</title>
   </head>
   <body style="margin:0;padding:0;background:#faf7f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#0f172a;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf7f0;padding:32px 16px;">
@@ -1342,7 +1347,7 @@ const notifyFinance = async (req, res) => {
                   Tender Dashboard
                 </p>
                 <h1 style="margin:6px 0 0;font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.01em;">
-                  Banking Documents Pending
+                  Documents Pending
                 </h1>
               </td>
             </tr>
@@ -1354,7 +1359,7 @@ const notifyFinance = async (req, res) => {
                   Hi Finance Team,
                 </p>
                 <p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:#334155;">
-                  The following tender is awaiting <strong>banking documents</strong> — please review and action at the earliest.
+                  The following tender is awaiting <strong>documents</strong> — please review and action at the earliest.
                 </p>
               </td>
             </tr>
@@ -1371,7 +1376,7 @@ const notifyFinance = async (req, res) => {
                     </td>
                     <td>
                       <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;letter-spacing:0.02em;">
-                        ⚠ Banking Docs Pending
+                        ⚠ Docs Pending
                       </span>
                     </td>
                   </tr>
@@ -1436,11 +1441,60 @@ const notifyFinance = async (req, res) => {
             <tr>
               <td style="padding:22px 28px 0;">
                 <p style="margin:0;font-size:13px;line-height:1.6;color:#334155;">
-                  Please prepare and attach the required banking documents (pay order, bank guarantee, etc.) so the submission can proceed on time.
+                  Please prepare and attach the required documents (pay order, bank guarantee, etc.) so the submission can proceed on time.
                 </p>
               </td>
             </tr>
+            <!-- Actions: two buttons side by side -->
+            <tr>
+              <td style="padding:22px 28px 0;" align="left">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <!-- Button 1: View Tender -->
+                    // <td style="padding-right:10px;" valign="middle">
+                    //   <!--[if mso]>
+                    //   <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                    //     href="${tenderUrl}"
+                    //     style="height:40px;v-text-anchor:middle;width:150px;"
+                    //     arcsize="10%" stroke="f" fillcolor="#0ea5e9">
+                    //     <w:anchorlock/>
+                    //     <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:700;">
+                    //       View Tender
+                    //     </center>
+                    //   </v:roundrect>
+                    //   <![endif]-->
+                    //   <!--[if !mso]><!-- -->
+                    //   <a href="${tenderUrl}" target="_blank"
+                    //     style="display:inline-block;background-color:#0ea5e9;border:1px solid #0ea5e9;border-radius:4px;color:#ffffff !important;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;line-height:1.2;padding:10px 20px;text-decoration:none;text-align:center;mso-padding-alt:0;mso-text-raise:8px;">
+                    //     View Tender
+                    //   </a>
+                    //   <!--<![endif]-->
+                    // </td>
 
+                    <!-- Button 2: View Submission -->
+                    <td valign="middle">
+                      <!--[if mso]>
+                      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                        href="${submissionUrl}"
+                        style="height:40px;v-text-anchor:middle;width:170px;"
+                        arcsize="10%" stroke="f" fillcolor="#a97400">
+                        <w:anchorlock/>
+                        <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:700;">
+                          View Submission
+                        </center>
+                      </v:roundrect>
+                      <![endif]-->
+                      <!--[if !mso]><!-- -->
+                      <a href="${submissionUrl}" target="_blank"
+                        style="display:inline-block;background-color:#a97400;border:1px solid #a97400;border-radius:4px;color:#ffffff !important;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;line-height:1.2;padding:10px 20px;text-decoration:none;text-align:center;mso-padding-alt:0;mso-text-raise:8px;">
+                        View Submission
+                      </a>
+                      <!--<![endif]-->
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
             <!-- Signature -->
             <tr>
               <td style="padding:22px 28px 0;">
