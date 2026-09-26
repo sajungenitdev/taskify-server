@@ -1313,7 +1313,7 @@ const notifyFinance = async (req, res) => {
       : "—";
 
     /* ✅ Build the tender URL used inside the email button */
-    const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+    const CLIENT_URL = process.env.CLIENT_URL || "https://taskify-server-5gat.onrender.com";
     const tenderUrl = `${CLIENT_URL}/tenders/manage?tenderId=${tender._id}`;
     const submissionUrl = `${CLIENT_URL}/tenders/submissions`;
 
@@ -1450,27 +1450,6 @@ const notifyFinance = async (req, res) => {
               <td style="padding:22px 28px 0;" align="left">
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                   <tr>
-                    <!-- Button 1: View Tender -->
-                    // <td style="padding-right:10px;" valign="middle">
-                    //   <!--[if mso]>
-                    //   <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
-                    //     href="${tenderUrl}"
-                    //     style="height:40px;v-text-anchor:middle;width:150px;"
-                    //     arcsize="10%" stroke="f" fillcolor="#0ea5e9">
-                    //     <w:anchorlock/>
-                    //     <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:700;">
-                    //       View Tender
-                    //     </center>
-                    //   </v:roundrect>
-                    //   <![endif]-->
-                    //   <!--[if !mso]><!-- -->
-                    //   <a href="${tenderUrl}" target="_blank"
-                    //     style="display:inline-block;background-color:#0ea5e9;border:1px solid #0ea5e9;border-radius:4px;color:#ffffff !important;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;line-height:1.2;padding:10px 20px;text-decoration:none;text-align:center;mso-padding-alt:0;mso-text-raise:8px;">
-                    //     View Tender
-                    //   </a>
-                    //   <!--<![endif]-->
-                    // </td>
-
                     <!-- Button 2: View Submission -->
                     <td valign="middle">
                       <!--[if mso]>
