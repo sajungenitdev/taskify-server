@@ -111,12 +111,30 @@ async function runCrawlInternal({ userId = null } = {}) {
     console.warn("[crawl] recipients lookup failed:", err.message);
   }
 
-  /* 3. Crawl external sites */
+  /* 3. Crawl external sites
+   *
+   * Each result now includes `effectiveSectionSelector` (from the
+   * crawler service). We keep it on the per-site record so it can
+   * be surfaced in the crawl summary if desired.
+   */
   const crawlResults = await crawlAllSources({ delayMs: 1200 });
   const sitesChecked = crawlResults.length;
 
   let newFound = 0;
   const insertedIds = [];
+
+  /* Build a map { sourceName -> { effectiveSectionSelector, effectiveMode } }
+   * so we can attach the crawl-scope info to each inserted tender's
+   * source summary later. */
+  const siteMetaByName = new Map();
+  for (const r of crawlResults) {
+    if (!r || !r.source) continue;
+    siteMetaByName.set(r.source, {
+      effectiveSectionSelector: r.effectiveSectionSelector || null,
+      effectiveMode: r.effectiveMode || null,
+      fellBack: !!r.fellBack,
+    });
+  }
 
   for (const siteResult of crawlResults) {
     if (!siteResult.ok) continue;
@@ -248,6 +266,11 @@ async function runCrawlInternal({ userId = null } = {}) {
     inserted: insertedIds.length,
     emailed,
     results: matchedResults,
+    /* ✅ NEW — expose per-site crawl scope (useful for diagnostics) */
+    siteScopes: Array.from(siteMetaByName.entries()).map(([name, meta]) => ({
+      name,
+      ...meta,
+    })),
   };
 }
 

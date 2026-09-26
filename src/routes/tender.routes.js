@@ -57,16 +57,33 @@ router.post("/docs/:id/renew", docCtrl.renewDoc);
 router.get("/settings", settingsCtrl.getSettings);
 router.put("/settings", settingsCtrl.updateSettings);
 
-/* ---------- Crawl ---------- */
+/* ============================================================
+ * CRAWL — run the full crawl across all active sites
+ * ============================================================ */
 router.post("/crawl/run", settingsCtrl.runCrawl);
 router.get("/crawl/last", settingsCtrl.getLastCrawl);
 
-/* ---------- Site Sources (crawler targets) ---------- */
+/* ============================================================
+ * SITE SOURCES (crawler targets)
+ *
+ * Order matters:
+ *   1. Static paths first (POST /sites/preview)
+ *   2. Then /:id paths
+ * ============================================================ */
 router.get("/sites", settingsCtrl.listSites);
 router.post("/sites", settingsCtrl.createSite);
+
+/* ✅ Preview an arbitrary URL (does not require a saved site) */
+router.post("/sites/preview", settingsCtrl.previewSite);
+
+/* ✅ NEW — Crawl a single saved site immediately (by _id) */
+router.post("/sites/:id/crawl", settingsCtrl.crawlSiteNow);
+
+/* ✅ NEW — Preview a saved site using its stored config */
+router.post("/sites/:id/test", settingsCtrl.previewSavedSite);
+
 router.put("/sites/:id", settingsCtrl.updateSite);
 router.delete("/sites/:id", settingsCtrl.deleteSite);
-router.post("/sites/preview", settingsCtrl.previewSite);
 
 /* ============================================================
  * TENDER CRUD — root
@@ -97,7 +114,7 @@ router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
-/* ✅ NEW — Notify Finance for a tender */
+/* ✅ Notify Finance for a tender */
 router.post("/:id/notify-finance", tenderCtrl.notifyFinance);
 
 router.post(

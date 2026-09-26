@@ -110,6 +110,9 @@ const listSites = async (_req, res) => {
  *
  * Selectors are now OPTIONAL — if listSelector is empty the crawler
  * auto-detects the page structure at crawl time.
+ *
+ * ✅ NEW — `sectionSelector` lets the caller scope the crawl to a
+ * specific container (e.g. "table" or ".tender-list").
  * ============================================================ */
 const createSite = async (req, res) => {
     try {
@@ -122,6 +125,8 @@ const createSite = async (req, res) => {
             linkSelector,
             dateSelector,
             linkAttr,
+            /* ✅ NEW — optional section selector */
+            sectionSelector,
             /* engine */
             renderMode,
             /* site directory */
@@ -163,11 +168,14 @@ const createSite = async (req, res) => {
             dateSelector: dateSelector?.trim() || "",
             linkAttr: linkAttr?.trim() || "href",
 
+            /* ✅ Persist the section selector (trimmed) */
+            sectionSelector: (sectionSelector || "").trim(),
+
             /* Engine — default is auto */
             renderMode: renderMode || "auto",
 
             absoluteLinks: true,
-            active: true,        // always active on create
+            active: true, // always active on create
 
             sector: sector || "banks",
             portalUrl: portalUrl || url,
@@ -192,12 +200,21 @@ const createSite = async (req, res) => {
 
 /* ============================================================
  * UPDATE SITE
+ *
+ * ✅ NEW — trims `sectionSelector` if present in the payload.
  * ============================================================ */
 const updateSite = async (req, res) => {
     try {
+        const patch = { ...req.body, updatedBy: req.user._id };
+
+        // Trim the section selector when provided as a string
+        if (typeof patch.sectionSelector === "string") {
+            patch.sectionSelector = patch.sectionSelector.trim();
+        }
+
         const site = await SiteSource.findByIdAndUpdate(
             req.params.id,
-            { ...req.body, updatedBy: req.user._id },
+            patch,
             { new: true, runValidators: true },
         );
         if (!site) {
@@ -231,6 +248,9 @@ const deleteSite = async (req, res) => {
  * Only `url` is required. If selectors are omitted, the crawler
  * auto-detects them and returns what it found via
  * `detectedSelectors`.
+ *
+ * ✅ NEW — forwards `sectionSelector` to the crawler and returns
+ * `effectiveSectionSelector` so the UI can show what was used.
  * ============================================================ */
 const previewSite = async (req, res) => {
     try {
@@ -242,6 +262,7 @@ const previewSite = async (req, res) => {
             dateSelector,
             linkAttr,
             renderMode,
+            sectionSelector, // ✅ NEW
         } = req.body;
 
         if (!url || !url.trim()) {
@@ -260,13 +281,15 @@ const previewSite = async (req, res) => {
             linkSelector: linkSelector?.trim() || "",
             dateSelector: dateSelector?.trim() || "",
             linkAttr: linkAttr?.trim() || "href",
+            /* ✅ Forward the section selector */
+            sectionSelector: (sectionSelector || "").trim(),
             absoluteLinks: true,
             renderMode: renderMode || "auto",
         };
 
         const r = await crawlOne(tempSource);
 
-        /* Surface the new observability fields to the client */
+        /* Surface the observability fields to the client */
         return res.json({
             success: r.ok,
             data: {
@@ -274,10 +297,73 @@ const previewSite = async (req, res) => {
                 effectiveMode: r.effectiveMode,
                 fellBack: r.fellBack,
                 detectedSelectors: r.detectedSelectors ?? null,
+                /* ✅ Echo back what the crawler actually used */
+                effectiveSectionSelector: r.effectiveSectionSelector ?? null,
             },
         });
     } catch (err) {
         console.error("previewSite error:", err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+/* ============================================================
+ * CRAWL ONE SAVED SITE NOW — POST /sites/:id/crawl
+ * ============================================================ */
+const crawlSiteNow = async (req, res) => {
+    try {
+        const site = await SiteSource.findById(req.params.id).lean();
+        if (!site) {
+            return res
+                .status(404)
+                .json({ success: false, message: "Site not found" });
+        }
+
+        // Run the crawler once against this site
+        const r = await crawlOne(site);
+
+        return res.json({
+            success: r.ok,
+            data: {
+                ...r,
+                effectiveMode: r.effectiveMode ?? null,
+                fellBack: r.fellBack ?? false,
+                detectedSelectors: r.detectedSelectors ?? null,
+                effectiveSectionSelector: r.effectiveSectionSelector ?? null,
+            },
+        });
+    } catch (err) {
+        console.error("crawlSiteNow error:", err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+/* ============================================================
+ * PREVIEW ONE SAVED SITE — POST /sites/:id/test
+ * Uses the site's stored config (URL, sectionSelector, etc.)
+ * ============================================================ */
+const previewSavedSite = async (req, res) => {
+    try {
+        const site = await SiteSource.findById(req.params.id).lean();
+        if (!site) {
+            return res
+                .status(404)
+                .json({ success: false, message: "Site not found" });
+        }
+
+        const r = await crawlOne(site);
+
+        return res.json({
+            success: r.ok,
+            data: {
+                ...r,
+                effectiveMode: r.effectiveMode ?? null,
+                fellBack: r.fellBack ?? false,
+                detectedSelectors: r.detectedSelectors ?? null,
+                effectiveSectionSelector: r.effectiveSectionSelector ?? null,
+            },
+        });
+    } catch (err) {
+        console.error("previewSavedSite error:", err);
         res.status(500).json({ success: false, message: err.message });
     }
 };
@@ -287,6 +373,8 @@ module.exports = {
     updateSettings,
     getLastCrawl,
     runCrawl,
+    crawlSiteNow,
+    previewSavedSite,
     listSites,
     createSite,
     updateSite,

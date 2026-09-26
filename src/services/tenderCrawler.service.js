@@ -33,16 +33,65 @@ function domainOf(url) {
 }
 
 /* ============================================================
+ * Build a scoped cheerio context using sectionSelector
+ *
+ * IMPORTANT: We do NOT rebuild the cheerio root here. Rebuilding
+ * it loses DOM context (DataTables wrappers, sibling relationships,
+ * etc.) which breaks detection on real-world sites.
+ *
+ * Returns:
+ *   $scope                    — always the full cheerio root
+ *   matched                   — the matched section nodes (or null)
+ *   effectiveSectionSelector  — the selector that actually matched
+ * ============================================================ */
+function buildScope($full, sectionSelector) {
+  const trimmed = (sectionSelector || "").trim();
+  if (!trimmed) {
+    return { $scope: $full, matched: null, effectiveSectionSelector: null };
+  }
+
+  const matched = $full(trimmed);
+  if (matched.length === 0) {
+    // Selector didn't match — fall back to the full page
+    return { $scope: $full, matched: null, effectiveSectionSelector: null };
+  }
+
+  return { $scope: $full, matched, effectiveSectionSelector: trimmed };
+}
+
+/* ============================================================
  * AUTO-DETECT SELECTORS
  *
  * Strategy (first match wins):
- *   1. Common table-row patterns (BPDB, LGED, gov sites)
+ *   1. Common table-row patterns (BPDB, LGED, NESCO, gov sites)
  *   2. Common card/list-item patterns
  *   3. Fallback: every <a> whose text/href looks like a tender
+ *
+ * When `matched` (a section) is passed, candidate lookups prefer
+ * nodes INSIDE that section first.
  * ============================================================ */
-function autoDetectSelectors($) {
+function autoDetectSelectors($, matched) {
+  /* Helper: search inside the section first, then the whole page */
+  const findRows = (selector) => {
+    if (matched && matched.length > 0) {
+      try {
+        const within = matched.find(selector);
+        if (within.length > 0) return within;
+      } catch {
+        /* invalid selector — fall through */
+      }
+    }
+    return $(selector);
+  };
+
   /* ---------- 1. Table-based portals ---------- */
   const TABLE_ROW_CANDIDATES = [
+    "table tbody tr",
+    "table.dataTable tbody tr",
+    "table.notice-table tbody tr",
+    "table#noticeTable tbody tr",
+    "table tbody tr[role='row']",
+    ".dataTables_wrapper tbody tr",
     "table#dataTable tbody tr",
     "table#tblList tbody tr",
     "table#GridView1 tbody tr",
@@ -50,15 +99,16 @@ function autoDetectSelectors($) {
     "table.table-bordered tbody tr",
     "table.tableView tbody tr",
     "table#tenderTable tbody tr",
-    "table tbody tr",
+    "tbody tr",
   ];
 
   for (const rowSel of TABLE_ROW_CANDIDATES) {
-    const rows = $(rowSel);
+    const rows = findRows(rowSel);
     if (rows.length < 3) continue;
 
     const firstRow = rows.first();
-    const cells = firstRow.find("td");
+    // ✅ Support both <td> AND <th> cells (NESCO uses <th> inside <tbody>)
+    const cells = firstRow.find("td, th");
     if (cells.length === 0) continue;
 
     /* Find the cell with the highest "tender-likeness" score */
@@ -75,7 +125,7 @@ function autoDetectSelectors($) {
         const href = $(a).attr("href") || "";
 
         if (txt.length > 20) score += 2;
-        if (/tender|supply|procurement|repair|purchase|work|consultancy/i.test(txt))
+        if (/tender|supply|procurement|repair|purchase|work|consultancy|bid/i.test(txt))
           score += 3;
         if (/\/\d{4}\//.test(href)) score += 1;
         if (/\.pdf$/i.test(href)) score += 1;
@@ -89,11 +139,12 @@ function autoDetectSelectors($) {
 
     if (bestCellIdx === -1) continue;
 
+    const idx = bestCellIdx + 1;
     return {
       listSelector: rowSel,
-      titleSelector: `td:nth-child(${bestCellIdx + 1}) a`,
-      linkSelector: `td:nth-child(${bestCellIdx + 1}) a`,
-      dateSelector: "td:last-child",
+      titleSelector: `td:nth-child(${idx}) a, th:nth-child(${idx}) a, td:nth-child(${idx}), th:nth-child(${idx})`,
+      linkSelector: `td:nth-child(${idx}) a, th:nth-child(${idx}) a`,
+      dateSelector: "td:last-child, th:last-child",
       linkAttr: "href",
     };
   }
@@ -112,7 +163,7 @@ function autoDetectSelectors($) {
   ];
 
   for (const itemSel of LIST_CANDIDATES) {
-    const items = $(itemSel);
+    const items = findRows(itemSel);
     if (items.length < 3) continue;
 
     const firstItem = items.first();
@@ -128,13 +179,15 @@ function autoDetectSelectors($) {
     };
   }
 
-  /* ---------- 3. Fallback: raw link scan ---------- */
+  /* ---------- 3. Fallback: raw link scan inside the scope ---------- */
   const TENDER_HREF_RE = /\/(tender|tenders|notice|notices|procurement|egp)\//i;
   const TENDER_TEXT_RE =
-    /tender|supply|procurement|purchase|repair|work|consultancy|re-?tender/i;
+    /tender|supply|procurement|purchase|repair|work|consultancy|re-?tender|bid/i;
 
   const links = [];
-  $("a").each((_, a) => {
+  const linkPool = matched && matched.length > 0 ? matched.find("a") : $("a");
+
+  linkPool.each((_, a) => {
     const href = $(a).attr("href") || "";
     const text = $(a).text().trim();
 
@@ -160,30 +213,39 @@ function autoDetectSelectors($) {
   return null;
 }
 
-/* ---------- Cheerio parser (static HTML) ---------- */
+/* ============================================================
+ * Cheerio parser (static HTML) — scoped by sectionSelector
+ * ============================================================ */
 function parseWithCheerio(html, source) {
-  const $ = cheerio.load(html);
+  const $full = cheerio.load(html);
+
+  const { $scope, matched, effectiveSectionSelector } = buildScope(
+    $full,
+    source.sectionSelector,
+  );
 
   /* Build effective config — auto-detect if listSelector empty */
   let effective = {
-    listSelector: source.listSelector,
-    titleSelector: source.titleSelector,
-    linkSelector: source.linkSelector,
-    dateSelector: source.dateSelector,
+    listSelector: source.listSelector || "",
+    titleSelector: source.titleSelector || "",
+    linkSelector: source.linkSelector || "",
+    dateSelector: source.dateSelector || "",
     linkAttr: source.linkAttr || "href",
   };
 
   let detected = null;
   if (!effective.listSelector) {
-    const auto = autoDetectSelectors($);
-    if (!auto) return [];
+    const auto = autoDetectSelectors($scope, matched);
+    if (!auto) {
+      return { tenders: [], effectiveSectionSelector, detected: null };
+    }
     detected = auto;
     effective = { ...effective, ...auto };
   }
 
   /* --- Fallback sentinel: raw link list, no row wrapping --- */
   if (effective.listSelector === "__fallback_links__") {
-    return (effective._fallbackLinks || []).map((c) => ({
+    const list = (effective._fallbackLinks || []).map((c) => ({
       title: c.text,
       tenderLink: source.absoluteLinks
         ? toAbsolute(c.href, source.url)
@@ -192,20 +254,46 @@ function parseWithCheerio(html, source) {
       sourceSite: source.name,
       sourceDomain: source.domain || domainOf(source.url),
     }));
+    return { tenders: list, effectiveSectionSelector, detected };
   }
 
-  /* --- Normal path --- */
-  const rows = $(effective.listSelector);
+  /* --- Normal path: prefer rows scoped inside the section --- */
+  let rows;
+  if (matched && matched.length > 0) {
+    try {
+      const scoped = matched.find(effective.listSelector);
+      rows = scoped.length > 0 ? scoped : $scope(effective.listSelector);
+    } catch {
+      rows = $scope(effective.listSelector);
+    }
+  } else {
+    rows = $scope(effective.listSelector);
+  }
+
   const tenders = [];
 
   rows.each((_, el) => {
-    const $el = $(el);
-    const title = $el.find(effective.titleSelector).text().trim();
-    const rawLink =
-      $el.find(effective.linkSelector).attr(effective.linkAttr) || "";
-    const dateText = $el.find(effective.dateSelector).text().trim();
+    const $el = $scope(el);
 
+    /* Title — selector first, then first <a>, then first td/th */
+    let title = $el.find(effective.titleSelector).text().trim();
+    if (!title) {
+      title =
+        $el.find("a").first().text().trim() ||
+        $el.find("td, th").eq(1).text().trim() ||
+        "";
+    }
     if (!title) return;
+
+    /* Link — selector first, then first <a> */
+    let rawLink =
+      $el.find(effective.linkSelector).attr(effective.linkAttr) || "";
+    if (!rawLink) {
+      rawLink = $el.find("a[href]").first().attr("href") || "";
+    }
+
+    /* Date */
+    const dateText = $el.find(effective.dateSelector).text().trim();
 
     tenders.push({
       title,
@@ -218,10 +306,12 @@ function parseWithCheerio(html, source) {
     });
   });
 
-  return tenders;
+  return { tenders, effectiveSectionSelector, detected };
 }
 
-/* ---------- Puppeteer parser (JS-rendered pages) ---------- */
+/* ============================================================
+ * Puppeteer parser (JS-rendered pages) — honours sectionSelector
+ * ============================================================ */
 async function parseWithPuppeteer(source) {
   const puppeteer = require("puppeteer");
 
@@ -246,6 +336,21 @@ async function parseWithPuppeteer(source) {
       timeout: 45000,
     });
 
+    /* ✅ Wait for the section selector first (if provided) */
+    const sectionSel = (source.sectionSelector || "").trim();
+    let effectiveSectionSelector = null;
+
+    if (sectionSel) {
+      try {
+        await page.waitForSelector(sectionSel, { timeout: 15000 });
+        effectiveSectionSelector = sectionSel;
+      } catch {
+        console.warn(
+          `[puppeteer] sectionSelector "${sectionSel}" not found on ${source.url} — using full page`,
+        );
+      }
+    }
+
     /* Wait for a row selector if one was given */
     if (source.listSelector) {
       try {
@@ -260,18 +365,28 @@ async function parseWithPuppeteer(source) {
     /* Give JS a moment to inject rows */
     await new Promise((r) => setTimeout(r, 1500));
 
-    /* If no selectors provided, detect from the rendered DOM via Cheerio */
-    let effective = source;
+    /* If no listSelector provided, detect from the rendered DOM */
+    let effective = { ...source };
+    let detected = null;
+
     if (!source.listSelector) {
       const renderedHtml = await page.content();
-      const $ = cheerio.load(renderedHtml);
-      const auto = autoDetectSelectors($);
-      if (!auto) return [];
+      const $full = cheerio.load(renderedHtml);
+      const { matched, effectiveSectionSelector: detectedSection } =
+        buildScope($full, sectionSel);
+
+      if (detectedSection) effectiveSectionSelector = detectedSection;
+
+      const auto = autoDetectSelectors($full, matched);
+      if (!auto) {
+        return { tenders: [], effectiveSectionSelector, detected: null };
+      }
+      detected = auto;
       effective = { ...source, ...auto };
 
-      /* Sentinel — extract from Cheerio directly */
+      /* If the fallback link scan matched, use cheerio directly */
       if (effective.listSelector === "__fallback_links__") {
-        return (effective._fallbackLinks || []).map((c) => ({
+        const list = (effective._fallbackLinks || []).map((c) => ({
           title: c.text,
           tenderLink: source.absoluteLinks
             ? toAbsolute(c.href, source.url)
@@ -280,25 +395,71 @@ async function parseWithPuppeteer(source) {
           sourceSite: source.name,
           sourceDomain: source.domain || domainOf(source.url),
         }));
+        return { tenders: list, effectiveSectionSelector, detected };
       }
     }
 
+    /* ✅ Evaluate in the live browser, scoped to the section */
     const tenders = await page.evaluate(
       (cfg) => {
-        const rows = document.querySelectorAll(cfg.row);
+        const sectionEl = cfg.section
+          ? document.querySelector(cfg.section)
+          : null;
+        const root = sectionEl || document;
+
+        /* Try the detected row selector; fall back to common variants */
+        const rowCandidates = [
+          cfg.row,
+          "table tbody tr",
+          "tbody tr",
+          "tr[role='row']",
+        ];
+
+        let rows = [];
+        for (const sel of rowCandidates) {
+          if (!sel) continue;
+          try {
+            const found = root.querySelectorAll(sel);
+            if (found && found.length > 0) {
+              rows = Array.from(found);
+              break;
+            }
+          } catch {
+            /* invalid selector — skip */
+          }
+        }
+
         const out = [];
 
         rows.forEach((row) => {
-          const titleEl = row.querySelector(cfg.title);
-          const linkEl = row.querySelector(cfg.link);
-          const dateEl = cfg.date ? row.querySelector(cfg.date) : null;
-
-          const title = titleEl ? titleEl.innerText.trim() : "";
+          /* Title */
+          let title = "";
+          if (cfg.title) {
+            try {
+              const t = row.querySelector(cfg.title);
+              if (t) title = t.innerText.trim();
+            } catch {
+              /* invalid */
+            }
+          }
+          if (!title) {
+            title = (row.innerText || "").trim().split("\n")[0];
+          }
           if (!title) return;
 
+          /* Link */
           let rawLink = "";
-          if (linkEl) {
-            rawLink = linkEl.getAttribute(cfg.linkAttr || "href") || "";
+          if (cfg.link) {
+            try {
+              const l = row.querySelector(cfg.link);
+              if (l) rawLink = l.getAttribute(cfg.linkAttr || "href") || "";
+            } catch {
+              /* invalid */
+            }
+          }
+          if (!rawLink) {
+            const l = row.querySelector("a[href]");
+            if (l) rawLink = l.getAttribute("href") || "";
           }
 
           let absLink = rawLink;
@@ -308,16 +469,28 @@ async function parseWithPuppeteer(source) {
             absLink = rawLink;
           }
 
+          /* Date */
+          let dateText = "";
+          if (cfg.date) {
+            try {
+              const d = row.querySelector(cfg.date);
+              if (d) dateText = d.innerText.trim();
+            } catch {
+              /* invalid */
+            }
+          }
+
           out.push({
             title,
             tenderLink: absLink,
-            publishedAtText: dateEl ? dateEl.innerText.trim() : "",
+            publishedAtText: dateText,
           });
         });
 
         return out;
       },
       {
+        section: effectiveSectionSelector || "",
         row: effective.listSelector,
         title: effective.titleSelector,
         link: effective.linkSelector,
@@ -326,11 +499,15 @@ async function parseWithPuppeteer(source) {
       },
     );
 
-    return tenders.map((t) => ({
-      ...t,
-      sourceSite: source.name,
-      sourceDomain: source.domain || domainOf(source.url),
-    }));
+    return {
+      tenders: tenders.map((t) => ({
+        ...t,
+        sourceSite: source.name,
+        sourceDomain: source.domain || domainOf(source.url),
+      })),
+      effectiveSectionSelector,
+      detected,
+    };
   } finally {
     await browser.close();
   }
@@ -357,26 +534,36 @@ async function fetchHtml(url) {
 async function crawlOne(source) {
   const started = new Date();
   const isPersisted = !!source._id;
-  const renderMode = source.renderMode || "auto";   // default → auto
+  const renderMode = source.renderMode || "auto";
 
   try {
     let tenders = [];
     let effectiveMode = "cheerio";
     let fellBack = false;
     let detectedSelectors = null;
+    let effectiveSectionSelector = null;
 
     if (renderMode === "puppeteer") {
-      tenders = await parseWithPuppeteer(source);
+      const r = await parseWithPuppeteer(source);
+      tenders = r.tenders;
+      detectedSelectors = r.detected;
+      effectiveSectionSelector = r.effectiveSectionSelector;
       effectiveMode = "puppeteer";
     } else if (renderMode === "cheerio") {
       const html = await fetchHtml(source.url);
-      tenders = parseWithCheerio(html, source);
+      const r = parseWithCheerio(html, source);
+      tenders = r.tenders;
+      detectedSelectors = r.detected;
+      effectiveSectionSelector = r.effectiveSectionSelector;
       effectiveMode = "cheerio";
     } else {
       /* ---------- AUTO: cheerio first, puppeteer if 0 ---------- */
       try {
         const html = await fetchHtml(source.url);
-        tenders = parseWithCheerio(html, source);
+        const r = parseWithCheerio(html, source);
+        tenders = r.tenders;
+        detectedSelectors = r.detected;
+        effectiveSectionSelector = r.effectiveSectionSelector;
       } catch (err) {
         console.warn(
           `[crawl] cheerio fetch failed for ${source.name}: ${err.message}`,
@@ -388,7 +575,10 @@ async function crawlOne(source) {
         console.log(
           `[crawl] cheerio found 0 on ${source.name} — trying puppeteer…`,
         );
-        tenders = await parseWithPuppeteer(source);
+        const r = await parseWithPuppeteer(source);
+        tenders = r.tenders;
+        detectedSelectors = r.detected;
+        effectiveSectionSelector = r.effectiveSectionSelector;
         effectiveMode = "puppeteer";
         fellBack = true;
       }
@@ -411,6 +601,7 @@ async function crawlOne(source) {
       effectiveMode,
       fellBack,
       detectedSelectors,
+      effectiveSectionSelector,
     };
   } catch (err) {
     if (isPersisted) {

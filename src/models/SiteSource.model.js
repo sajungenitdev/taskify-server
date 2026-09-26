@@ -7,18 +7,26 @@ const SiteSourceSchema = new mongoose.Schema(
         url: { type: String, required: true, trim: true },
         domain: { type: String, default: "" },
 
-        listSelector: { type: String, required: true },
-        titleSelector: { type: String, default: "td.title a" },
-        linkSelector: { type: String, default: "td.title a" },
-        dateSelector: { type: String, default: "td.date" },
+        /* ---------- SELECTORS ---------- */
+        /* listSelector is now OPTIONAL — blank means "auto-detect at crawl time" */
+        listSelector: { type: String, default: "" },
+        titleSelector: { type: String, default: "" },
+        linkSelector: { type: String, default: "" },
+        dateSelector: { type: String, default: "" },
         linkAttr: { type: String, default: "href" },
+
+        /* ✅ NEW — Optional CSS selector that scopes the crawler to the
+           container holding the tender list.
+           Examples: "table", ".table-responsive", "#tenderTable".
+           Blank = crawl the whole page (auto-detect). */
+        sectionSelector: { type: String, default: "", trim: true },
 
         absoluteLinks: { type: Boolean, default: true },
         active: { type: Boolean, default: true, index: true },
         renderMode: {
             type: String,
-            enum: ["cheerio", "puppeteer"],
-            default: "cheerio",
+            enum: ["auto", "cheerio", "puppeteer"],
+            default: "auto",
         },
 
         /* ============ Site Directory fields ============ */
